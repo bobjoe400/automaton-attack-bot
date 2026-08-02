@@ -31,6 +31,13 @@ def to_key(text: str) -> str:
     return "".join(c for c in text.upper() if c.isalnum())
 
 
+# OCR reads digits for letters on small glyphs ("IO" comes back as "1O" or
+# "10"); vocabulary entries are letters, so a digit in a read is always a
+# lookalike. Matching tries the translated variant too.
+_DIGIT_TO_LETTER = str.maketrans({"0": "O", "1": "I", "2": "Z",
+                                  "5": "S", "8": "B"})
+
+
 @dataclass(frozen=True)
 class Match:
     name: str
@@ -112,26 +119,32 @@ class Lexicon:
         length prefilter skips most of it, so this is not the hot path -- OCR
         is.
         """
-        key = to_key(raw)
-        if len(key) < self.matching.min_ocr_length:
+        raw_key = to_key(raw)
+        if len(raw_key) < self.matching.min_ocr_length:
             return None, 0.0
-        best, best_score = None, 0.0
-        sm = SequenceMatcher(None, key)
-        tolerance = max(3, len(key) // 3)
-        for name, entry_key in self.vocab:
-            if abs(len(entry_key) - len(key)) > tolerance:
-                continue
-            sm.set_seq2(entry_key)
-            # Both are cheap upper bounds on ratio(); skip anything that
-            # cannot beat the incumbent.
-            if (sm.real_quick_ratio() <= best_score
-                    or sm.quick_ratio() <= best_score):
-                continue
-            score = sm.ratio()
-            if score > best_score:
-                best, best_score = name, score
+        variants = [raw_key]
+        translated = raw_key.translate(_DIGIT_TO_LETTER)
+        if translated != raw_key:
+            variants.append(translated)
+
+        best, best_score, best_key = None, 0.0, raw_key
+        for key in variants:
+            sm = SequenceMatcher(None, key)
+            tolerance = max(3, len(key) // 3)
+            for name, entry_key in self.vocab:
+                if abs(len(entry_key) - len(key)) > tolerance:
+                    continue
+                sm.set_seq2(entry_key)
+                # Both are cheap upper bounds on ratio(); skip anything
+                # that cannot beat the incumbent.
+                if (sm.real_quick_ratio() <= best_score
+                        or sm.quick_ratio() <= best_score):
+                    continue
+                score = sm.ratio()
+                if score > best_score:
+                    best, best_score, best_key = name, score, key
         if best is not None:
-            best = self._prefer_extension(key, best, best_score)
+            best = self._prefer_extension(best_key, best, best_score)
         return best, best_score
 
     def _prefer_extension(self, read_key: str, best: str,

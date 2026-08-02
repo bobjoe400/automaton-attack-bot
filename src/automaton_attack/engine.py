@@ -127,6 +127,11 @@ class Engine:
         self.confirmer = Confirmer()
         self.stats = Stats()
         self.last_detections: list[Detection] = []
+        # How a decided word becomes keystrokes. The default types inline;
+        # live mode replaces this with TypingWorker.submit so the scan loop
+        # never blocks on the keyboard.
+        self.dispatch: Callable[[TypedWord], None] = (
+            lambda word: self.typist.type(word.keystrokes))
 
     # Where Hoodwink stands, in panel fractions: words die when their
     # automaton reaches this point, so distance to it is time-to-live.
@@ -166,7 +171,7 @@ class Engine:
                 continue
             self.deduper.mark(detection.name, detection.pos)
             word = TypedWord(timestamp, detection, detection.match.keystrokes)
-            self.typist.type(word.keystrokes)
+            self.dispatch(word)
             self.stats.record(word)
             typed.append(word)
         # Update after the loop: a word must survive a full scan-to-scan gap,

@@ -215,7 +215,7 @@ def cmd_update_data(args) -> int:
 
 def _drive(frames, lexicon, backend, settings, typist, *,
            locate=True, auto_start=False, rounds=1,
-           stop_on_game_over=True, debug=False):
+           stop_on_game_over=True, debug=False, threaded=False):
     """Session-aware scan loop shared by replay and run.
 
     Tracks game state alongside word detection: types only while the game is
@@ -230,6 +230,16 @@ def _drive(frames, lexicon, backend, settings, typist, *,
     detector = Detector(lexicon, backend, settings)
     engine = Engine(detector, typist, settings)
     tracker = SessionTracker(backend, settings)
+    worker = None
+    if threaded:
+        from .keyboard import TypingWorker
+
+        def emit(word, waited):
+            print(_describe(word) + f"  [queued {waited:.2f}s]")
+
+        worker = TypingWorker(typist, engine._urgency, on_typed=emit)
+        engine.dispatch = worker.submit
+        worker.start()
     # Geometry is "proven" once the tracker recognises any game state with
     # it. Until then, keep re-locating: locking on the first plausible
     # rectangle once blinded a whole session when a transitional frame
@@ -242,6 +252,30 @@ def _drive(frames, lexicon, backend, settings, typist, *,
     seen_playing = False
     game_over_at = None
     score_reported = False
+
+    try:
+        return _drive_loop(
+            frames, lexicon, backend, settings, typist, engine, tracker,
+            worker, locate=locate, auto_start=auto_start, rounds=rounds,
+            stop_on_game_over=stop_on_game_over, debug=debug,
+            state_vars=(proven, rounds_done, last_click, first_timestamp,
+                        hinted, seen_playing, game_over_at, score_reported))
+    finally:
+        if worker is not None:
+            worker.stop()
+            if worker.dropped_stale:
+                print(f"{worker.dropped_stale} queued word(s) dropped as "
+                      f"stale.")
+
+
+def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
+                worker, *, locate, auto_start, rounds, stop_on_game_over,
+                debug, state_vars):
+    from .detect import Detector
+    from .session import GameState, SessionTracker, locate_panel
+
+    (proven, rounds_done, last_click, first_timestamp,
+     hinted, seen_playing, game_over_at, score_reported) = state_vars
 
     for timestamp, frame in frames:
         if first_timestamp is None:
@@ -274,7 +308,8 @@ def _drive(frames, lexicon, backend, settings, typist, *,
         if state is GameState.PLAYING:
             seen_playing = True
             for word in engine.process(timestamp, frame):
-                print(_describe(word))
+                if worker is None:      # threaded mode prints at type time
+                    print(_describe(word))
             if debug:
                 for d in engine.last_detections:
                     print(f"    ({d.box[0]:4},{d.box[1]:4}) ocr={d.raw!r} "
@@ -394,6 +429,7 @@ def cmd_run(args) -> int:
             rounds=args.rounds,
             stop_on_game_over=not args.keep_running,
             debug=args.debug,
+            threaded=True,
         )
     except KeyboardInterrupt:
         print("\nStopped.")

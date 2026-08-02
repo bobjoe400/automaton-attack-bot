@@ -167,3 +167,12 @@ def test_short_and_event_words_match(vocab_only, raw, expected):
 
 def test_single_letter_reads_are_still_noise(vocab_only):
     assert vocab_only.match("I") is None
+
+
+@pytest.mark.parametrize("raw", ["1O", "10", "I0"])
+def test_digit_lookalikes_still_find_io(vocab_only, raw):
+    """Small glyphs OCR as digits; a digit in a read is always a lookalike
+    because vocabulary entries are letters."""
+    match = vocab_only.match(raw)
+    assert match is not None
+    assert match.name == "IO"
