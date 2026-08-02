@@ -218,11 +218,71 @@ class Detector:
                 lambda box: self.backend.read(prepare(mask, box)), boxes))
         else:
             raws = [self.backend.read(prepare(mask, box)) for box in boxes]
-        results = []
+        detections = []
         for box, raw in zip(boxes, raws):
             match = self.lexicon.match(
                 raw, allow_fallback=not self.settings.safe_mode
             ) if raw else None
-            if match or include_unmatched:
-                results.append(Detection(box=box, raw=raw, match=match))
-        return results
+            detections.append(Detection(box=box, raw=raw, match=match))
+        detections = self._stitch_wrapped_lines(detections)
+        return [d for d in detections if d.match or include_unmatched]
+
+    # A wrapped phrase's second line starts within a line-height below the
+    # first; a merge is accepted only on a confident corpus match.
+    STITCH_MIN_SCORE = 0.85
+
+    def _stitch_wrapped_lines(
+            self, detections: list[Detection]) -> list[Detection]:
+        """Rejoin phrases that wrap onto two on-screen lines.
+
+        The line splitter (rightly) separates stacked words, but a LONG
+        voice line wraps into exactly the same shape. If two vertically
+        adjacent, horizontally overlapping lines jointly match the corpus
+        convincingly -- and they weren't both confident matches on their
+        own -- they are one phrase, typed in reading order: top line
+        first. 'There's a fine line between bravery and stupidity.' died
+        as two separately-typed fallback lines to make the point.
+        """
+        if len(detections) < 2:
+            return detections
+        detections = sorted(detections, key=lambda d: (d.box[1], d.box[0]))
+        max_gap = self.settings.blobs.max_height
+        consumed = [False] * len(detections)
+        out = []
+        for i, top in enumerate(detections):
+            if consumed[i]:
+                continue
+            merged = None
+            for j in range(i + 1, len(detections)):
+                if consumed[j]:
+                    continue
+                below = detections[j]
+                gap = below.box[1] - (top.box[1] + top.box[3])
+                if gap > max_gap:
+                    break
+                if gap < -5:
+                    continue
+                overlap = (min(top.box[0] + top.box[2],
+                               below.box[0] + below.box[2])
+                           - max(top.box[0], below.box[0]))
+                if overlap < 0.5 * min(top.box[2], below.box[2]):
+                    continue
+                if (top.match and top.match.score >= 0.9
+                        and below.match and below.match.score >= 0.9):
+                    continue        # two independent, confident words
+                joined = f"{top.raw.strip()} {below.raw.strip()}"
+                match = self.lexicon.match(joined, allow_fallback=False)
+                if match is None or match.score < self.STITCH_MIN_SCORE:
+                    continue
+                x0 = min(top.box[0], below.box[0])
+                y0 = top.box[1]
+                x1 = max(top.box[0] + top.box[2],
+                         below.box[0] + below.box[2])
+                y1 = below.box[1] + below.box[3]
+                merged = Detection(box=(x0, y0, x1 - x0, y1 - y0),
+                                   raw=joined, match=match)
+                consumed[j] = True
+                break
+            out.append(merged if merged else top)
+            consumed[i] = True
+        return out

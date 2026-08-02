@@ -110,3 +110,56 @@ def test_single_words_are_unaffected_by_the_splitter(detector):
     mask = np.zeros((965, 963), np.uint8)
     mask[400:422, 300:420] = text_like_roi()
     assert len(detector.blobs(mask)) == 1
+
+
+def test_wrapped_phrase_lines_are_stitched_in_reading_order():
+    """A long voice line wraps to two on-screen lines; typed separately
+    (bottom first, by urgency) it never completes. Stitched, it types top
+    line first as one phrase."""
+    from automaton_attack.detect import Detection
+    from automaton_attack.lexicon import Lexicon
+
+    lexicon = Lexicon(
+        ["Placeholder"],
+        phrases=["There's a fine line between bravery and stupidity."])
+    detector = Detector(lexicon, NoOcr(), Settings())
+    top = Detection(box=(300, 400, 400, 22),
+                    raw="THERE'S A FINE LINE BETWEEN BRAVERY AND",
+                    match=None)
+    bottom = Detection(box=(380, 428, 120, 22), raw="STUPIDITY.",
+                       match=None)
+    stitched = detector._stitch_wrapped_lines([bottom, top])
+    assert len(stitched) == 1
+    assert stitched[0].match is not None
+    assert stitched[0].match.source == "phrase"
+    assert stitched[0].match.keystrokes.startswith("theresafineline")
+    assert stitched[0].match.keystrokes.endswith("stupidity")
+
+
+def test_stacked_independent_words_are_not_stitched():
+    from automaton_attack.detect import Detection
+    from automaton_attack.lexicon import Lexicon, Match
+
+    lexicon = Lexicon(["Earth Spirit", "Phantom Assassin"])
+    detector = Detector(lexicon, NoOcr(), Settings())
+    a = Detection(box=(300, 400, 200, 22), raw="EARTH SPIRIT",
+                  match=Match("EARTH SPIRIT", 1.0, "vocab"))
+    b = Detection(box=(310, 428, 260, 22), raw="PHANTOM ASSASSIN",
+                  match=Match("PHANTOM ASSASSIN", 1.0, "vocab"))
+    assert len(detector._stitch_wrapped_lines([a, b])) == 2
+
+
+def test_distant_lines_are_not_stitched():
+    from automaton_attack.detect import Detection
+    from automaton_attack.lexicon import Lexicon
+
+    lexicon = Lexicon(
+        ["Placeholder"],
+        phrases=["There's a fine line between bravery and stupidity."])
+    detector = Detector(lexicon, NoOcr(), Settings())
+    top = Detection(box=(300, 400, 400, 22),
+                    raw="THERE'S A FINE LINE BETWEEN BRAVERY AND",
+                    match=None)
+    far_below = Detection(box=(380, 700, 120, 22), raw="STUPIDITY.",
+                          match=None)
+    assert len(detector._stitch_wrapped_lines([top, far_below])) == 2

@@ -55,7 +55,7 @@ PHRASES_FILE = "phrases.txt"
 # reject rule): caches built by older code silently miss words otherwise --
 # a perfectly-read 'ETERNAL SHROUD' once fuzzy-stole INFERNAL SHRED because
 # the on-disk cache predated its un-retirement.
-CORPUS_VERSION = 2
+CORPUS_VERSION = 3
 VERSION_PREFIX = "# corpus-version:"
 
 # ---------------------------------------------------------------------------
@@ -87,10 +87,13 @@ RETIRED = {
     "Cornucopia",
 }
 
-# Voice lines: long enough to be worth a fuzzy match, short enough to be one
-# on-screen line, plain enough to be typeable.
+# Voice lines: long enough to be worth a fuzzy match, plain enough to be
+# typeable. Long lines WRAP on screen rather than being excluded from the
+# game: "There's a fine line between bravery and stupidity." (51 chars)
+# appeared as a two-line target and died unmatched under the old 48 cap.
+# The detector stitches wrapped lines back together.
 PHRASE_MIN_LENGTH = 8
-PHRASE_MAX_LENGTH = 48
+PHRASE_MAX_LENGTH = 72
 PHRASE_ALLOWED = re.compile(r"^[A-Za-z ',.!?-]+$")
 
 # A line known to be in both dotabase and the minigame; if the filter drops
