@@ -271,6 +271,9 @@ def _drive(frames, lexicon, backend, settings, typist, *,
             if worker.dropped_stale:
                 print(f"{worker.dropped_stale} queued word(s) dropped as "
                       f"stale.")
+            if worker.dropped_triage:
+                print(f"{worker.dropped_triage} weak guess(es) skipped "
+                      f"while the keyboard queue was deep.")
 
 
 def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
@@ -281,6 +284,8 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
 
     (proven, rounds_done, last_click, first_timestamp,
      hinted, seen_playing, game_over_at, score_reported) = state_vars
+    last_multiplier = None
+    last_multiplier_read = -1e9
 
     for timestamp, frame in frames:
         if first_timestamp is None:
@@ -290,7 +295,9 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
             if panel:
                 drift = max(abs(a - b) for a, b in
                             zip(panel, settings.geometry.panel))
-                if drift > 8:
+                # Rebuilds are cheap, and even a few pixels of offset can
+                # clip the tight digit crops (score, timer).
+                if drift > 3:
                     settings = settings.with_panel(panel)
                     detector = Detector(lexicon, backend, settings)
                     engine.detector = detector
@@ -312,6 +319,24 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
 
         if state is GameState.PLAYING:
             seen_playing = True
+            # Log the combo so a loss is findable in the log (and footage)
+            # without a post-hoc OCR scrub of the whole recording.
+            if timestamp - last_multiplier_read >= 0.5:
+                last_multiplier_read = timestamp
+                multiplier = tracker.read_multiplier(frame)
+                if multiplier is not None and multiplier != last_multiplier:
+                    clock = tracker.read_timer(frame)
+                    clock_note = (f", clock {clock // 60}:{clock % 60:02d}"
+                                  if clock is not None else "")
+                    if (last_multiplier is not None
+                            and multiplier < last_multiplier):
+                        print(f"[{timestamp:7.2f}s] !!! COMBO LOST "
+                              f"x{last_multiplier} -> x{multiplier}"
+                              f"{clock_note}")
+                    else:
+                        print(f"[{timestamp:7.2f}s] combo x{multiplier}"
+                              f"{clock_note}")
+                    last_multiplier = multiplier
             for word in engine.process(timestamp, frame):
                 if worker is None:      # threaded mode prints at type time
                     print(_describe(word))
@@ -326,10 +351,10 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                 game_over_at = timestamp
                 score_reported = False
             # The displayed score counts up as the modal appears; report
-            # only once the same value has been read twice (or it has had
-            # ample time to finish animating).
+            # only once the settled criteria hold (or the animation has had
+            # ample time and the best confirmed value stands).
             if not score_reported and (tracker.score_settled
-                                       or timestamp - game_over_at > 4.0):
+                                       or timestamp - game_over_at > 5.0):
                 score_reported = True
                 score = tracker.final_score
                 print(f"[{timestamp:7.2f}s] GAME OVER -- total score: "
@@ -477,7 +502,9 @@ def cmd_analyze(args) -> int:
             if panel:
                 drift = max(abs(a - b) for a, b in
                             zip(panel, settings.geometry.panel))
-                if drift > 8:
+                # Rebuilds are cheap, and even a few pixels of offset can
+                # clip the tight digit crops (score, timer).
+                if drift > 3:
                     settings = settings.with_panel(panel)
             elif not args.no_locate_panel:
                 continue    # wait for a frame the panel can be found on
@@ -485,9 +512,10 @@ def cmd_analyze(args) -> int:
             tracker = SessionTracker(backend, settings)
         if tracker.classify(timestamp, frame) is not GameState.PLAYING:
             continue
+        clock = tracker.read_timer(frame)
         for detection in detector.detect(frame, include_unmatched=True,
                                          timestamp=timestamp):
-            log.add(timestamp, detection)
+            log.add(timestamp, detection, clock=clock)
 
     print()
     print(log.report())

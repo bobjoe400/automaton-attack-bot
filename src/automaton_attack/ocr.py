@@ -103,7 +103,8 @@ class TesseractBackend:
 
     name = "tesseract"
 
-    def __init__(self, binary: str | Path | None = None) -> None:
+    def __init__(self, binary: str | Path | None = None,
+                 config: str = TESSERACT_CONFIG) -> None:
         try:
             import pytesseract
         except ImportError as exc:  # pragma: no cover - env dependent
@@ -119,13 +120,28 @@ class TesseractBackend:
         pytesseract.pytesseract.tesseract_cmd = path
         self._pytesseract = pytesseract
         self.binary = path
+        self.config = config
 
     def read(self, image: np.ndarray) -> str:
         if image.size == 0:
             return ""
-        text = self._pytesseract.image_to_string(image,
-                                                 config=TESSERACT_CONFIG)
+        text = self._pytesseract.image_to_string(image, config=self.config)
         return clean_text(" ".join(text.split()))
+
+
+# HUD numbers (final score, timer). PP-OCR's recognition model garbles
+# digit groups at HUD size ('17,770' came back as '17,7%'), while tesseract
+# with a digit whitelist on the raw grayscale reads them exactly. Optional:
+# None when tesseract isn't installed, and callers fall back to the
+# general backend.
+DIGIT_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789,:"
+
+
+def make_digit_reader() -> TesseractBackend | None:
+    try:
+        return TesseractBackend(config=DIGIT_CONFIG)
+    except OcrUnavailable:
+        return None
 
 
 class OcrUnavailable(RuntimeError):
@@ -142,17 +158,53 @@ def find_tesseract() -> str | None:
     return None
 
 
+class OcrPool:
+    """N engines behind one ``read``, so blobs can be OCRed in parallel.
+
+    onnxruntime releases the GIL during inference, so distinct engine
+    instances on distinct threads genuinely run concurrently -- but one
+    RapidOCR instance is not guaranteed re-entrant, hence a borrow queue
+    rather than a shared engine.
+    """
+
+    def __init__(self, factory, size: int) -> None:
+        import queue
+
+        self._queue: queue.Queue = queue.Queue()
+        engines = [factory() for _ in range(max(1, size))]
+        for engine in engines:
+            self._queue.put(engine)
+        self.name = f"{engines[0].name} x{len(engines)}"
+        self.size = len(engines)
+
+    def read(self, image: np.ndarray) -> str:
+        engine = self._queue.get()
+        try:
+            return engine.read(image)
+        finally:
+            self._queue.put(engine)
+
+
 BACKENDS = ("rapidocr", "tesseract")
+POOL_SIZE = min(4, (os.cpu_count() or 2) - 1)
 
 
-def get_backend(name: str = "auto") -> OcrBackend:
-    """Build an OCR backend by name. ``auto`` prefers rapidocr."""
+def get_backend(name: str = "auto", pool: bool = True) -> OcrBackend:
+    """Build an OCR backend by name. ``auto`` prefers rapidocr.
+
+    With ``pool`` (the default), rapidocr is wrapped in an OcrPool so the
+    detector can read several word blobs at once; a busy screen used to
+    pay ~50 ms per blob serially. Tesseract shells out per call and is
+    already parallel-safe as a single instance.
+    """
     if name == "auto":
         try:
-            return RapidOcrBackend()
+            return get_backend("rapidocr", pool=pool)
         except OcrUnavailable:
             return TesseractBackend()
     if name == "rapidocr":
+        if pool and POOL_SIZE > 1:
+            return OcrPool(RapidOcrBackend, POOL_SIZE)
         return RapidOcrBackend()
     if name == "tesseract":
         return TesseractBackend()

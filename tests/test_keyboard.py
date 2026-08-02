@@ -16,10 +16,13 @@ def word(name, pos, timestamp=0.0):
 
 
 def urgency(detection):
-    settings = Settings()
-    return Engine._urgency(
-        type("E", (), {"settings": settings, "PLATFORM": Engine.PLATFORM})(),
-        detection)
+    class _StubDetector:
+        settings = Settings()
+
+        def detect(self, *args, **kwargs):
+            return []
+
+    return Engine(_StubDetector(), settings=Settings())._urgency(detection)
 
 
 def drain(worker, expected, timeout=3.0):
@@ -84,3 +87,50 @@ def test_on_typed_fires_after_the_keys_are_sent():
     worker.stop()
     assert [e[0] for e in events] == ["bane"]
     assert events[0][1] >= 0.0
+
+
+def test_weak_guesses_are_triaged_when_the_queue_is_deep():
+    """Keyboard time is the scarce resource under load: a 0.67 fly-in
+    partial gets retyped correctly a scan later anyway, so it loses its
+    seat when 3+ words are waiting."""
+    from automaton_attack.detect import Detection
+    from automaton_attack.lexicon import Match
+
+    typist = DryRunTypist()
+    worker = TypingWorker(typist, urgency)
+
+    def scored(name, score, pos, source="vocab"):
+        d = Detection(box=(pos[0], pos[1], 120, 20), raw=name,
+                      match=Match(name, score, source))
+        return TypedWord(0.0, d, d.match.keystrokes)
+
+    # ROT sits closest to the platform, so it pops FIRST -- while four
+    # other words are still waiting. That is exactly when a weak guess
+    # must lose its seat. (A weak guess popping after the queue drains
+    # types normally; see the shallow-queue test.)
+    worker.submit(scored("ROT", 0.67, (430, 590)))          # weak, urgent
+    worker.submit(scored("PUDGE", 1.0, (430, 500)))
+    worker.submit(scored("LINA", 1.0, (450, 900)))
+    worker.submit(scored("BANE", 1.0, (60, 40)))
+    worker.submit(scored("UNKNOWNWORD", 0.0, (200, 200), source="fallback"))
+    worker.start()
+    drain(worker, 4)
+    worker.stop()
+    assert "rot" not in typist.typed            # triaged under load
+    assert "unknownword" in typist.typed        # fallbacks are exempt
+    assert worker.dropped_triage == 1
+
+
+def test_weak_guesses_type_when_the_queue_is_shallow():
+    from automaton_attack.detect import Detection
+    from automaton_attack.lexicon import Match
+
+    typist = DryRunTypist()
+    worker = TypingWorker(typist, urgency)
+    d = Detection(box=(100, 100, 120, 20), raw="ROT",
+                  match=Match("ROT", 0.67, "vocab"))
+    worker.submit(TypedWord(0.0, d, d.match.keystrokes))
+    worker.start()
+    drain(worker, 1)
+    worker.stop()
+    assert typist.typed == ["rot"]

@@ -37,6 +37,10 @@ class ReadRecord:
     best_name: str | None = None
     first_seen: float = 0.0
     last_seen: float = 0.0
+    # Round clock (seconds remaining) at first sighting, when readable.
+    # The game's own timestamp: exact regardless of capture latency or
+    # where a recording was trimmed.
+    clock: int | None = None
 
     @property
     def stable(self) -> bool:
@@ -53,19 +57,22 @@ class ReadLog:
     def __init__(self) -> None:
         self.records: dict[str, ReadRecord] = {}
 
-    def add(self, timestamp: float, detection) -> None:
+    def add(self, timestamp: float, detection,
+            clock: int | None = None) -> None:
         key = to_key(detection.raw)
         if len(key) < MIN_KEY_LENGTH:
             return
         record = self.records.setdefault(key, ReadRecord(key))
         if record.sightings == 0:
             record.first_seen = timestamp
+            record.clock = clock
         record.sightings += 1
         record.last_seen = timestamp
         record.raws[detection.raw.strip()] += 1
         if detection.match:
             record.matches[detection.match.name] += 1
-            if detection.match.score > record.best_score:
+            if (detection.match.score > record.best_score
+                    or record.best_name is None):
                 record.best_score = detection.match.score
                 record.best_name = detection.match.name
 
@@ -98,20 +105,26 @@ class ReadLog:
         lines = []
         weak = self.weak_matches()
         gaps = self.unmatched()
+        def when(r: ReadRecord) -> str:
+            base = f"{r.first_seen:5.1f}-{r.last_seen:5.1f}s"
+            if r.clock is not None:
+                base += f" (clock {r.clock // 60}:{r.clock % 60:02d})"
+            return base
+
         if weak:
             lines.append("Stable reads with only a weak match -- the match "
                          "is probably the wrong word:")
             for r in weak:
                 lines.append(
                     f"  {r.sample_raw!r:36} seen {r.sightings}x at "
-                    f"{r.first_seen:5.1f}-{r.last_seen:5.1f}s -> best match "
+                    f"{when(r)} -> best match "
                     f"{r.best_name} ({r.best_score:.2f})")
         if gaps:
             lines.append("Stable reads that matched nothing:")
             for r in gaps:
                 lines.append(
                     f"  {r.sample_raw!r:36} seen {r.sightings}x at "
-                    f"{r.first_seen:5.1f}-{r.last_seen:5.1f}s")
+                    f"{when(r)}")
         if not lines:
             return ("No suspicious reads: every stable read matched "
                     "convincingly.")

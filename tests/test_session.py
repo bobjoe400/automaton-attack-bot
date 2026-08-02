@@ -220,20 +220,80 @@ def test_parse_score_survives_ocr_noise(row, expected):
     assert parse_score(row) == expected
 
 
-def test_score_settles_only_on_two_equal_reads():
-    """The game-over score animates upward; 150 was reported for a final
-    1,150 because the first frame's value was trusted. Two consecutive
-    identical reads are required now."""
+def _score_tracker(reads):
     tracker = SessionTracker(backend=None, settings=Settings())
-    tracker.state = GameState.GAME_OVER
-
-    reads = iter([150, 900, 1150, 1150])
-    tracker.read_final_score = lambda frame: next(reads)
+    read_iter = iter(reads)
+    tracker.read_final_score = lambda frame: next(read_iter)
     tracker._read_bright_text = lambda region: "GAMEOVER"
+    return tracker
 
+
+def _feed(tracker, reads, start=0.0, step=0.3):
     frame = np.zeros((1080, 1920, 3), np.uint8)
-    for expected_settled in (False, False, False, True):
+    timestamps = [start + i * step for i in range(len(reads))]
+    for timestamp in timestamps:
         tracker._last_ocr = -1e9        # bypass the OCR throttle
-        tracker.classify(0.0, frame)
-        assert tracker.score_settled is expected_settled
+        tracker.classify(timestamp, frame)
+
+
+def test_score_settles_on_the_stable_maximum():
+    """The count-up animation can repeat a value long enough to fool a
+    short window: 478 was reported for a final 17,770. Settling requires
+    a 3-read identical tail on the LARGEST twice-confirmed value, 2 s
+    after the modal appeared."""
+    reads = [150, 478, 478, 3000, 9000, 17770, 17770, 17770]
+    tracker = _score_tracker(reads)
+    _feed(tracker, reads)
+    assert tracker.score_settled
+    assert tracker.final_score == 17770
+
+
+def test_mid_animation_repeat_does_not_settle_early():
+    reads = [478, 478, 478]             # all inside the first 0.9 s
+    tracker = _score_tracker(reads)
+    _feed(tracker, reads)
+    assert not tracker.score_settled    # too soon: animation may be running
+    assert tracker.final_score == 478   # still the best provisional value
+
+
+def test_single_wild_misread_cannot_become_the_score():
+    """One glitched huge read (77770) must not outrank a value the OCR
+    confirmed repeatedly."""
+    reads = [1150, 77770, 1150, 1150, 1150, 1150, 1150, 1150]
+    tracker = _score_tracker(reads)
+    _feed(tracker, reads)
+    assert tracker.score_settled
     assert tracker.final_score == 1150
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("0:24", 24),
+    ("1:00", 60),
+    ("0.07", 7),           # OCR reads the colon as a dot sometimes
+    ("1:37", None),        # the round clock never exceeds 1:00 -- misread
+    ("TIME", None),
+    ("", None),
+])
+def test_parse_timer(text, expected):
+    from automaton_attack.session import parse_timer
+
+    assert parse_timer(text) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("X3.0", 3.0),
+    ("x1.5", 1.5),
+    ("*2,0", 2.0),      # OCR reads the dot as a comma sometimes
+    ("3.0", 3.0),
+    ("X3O", 3.0),       # dot lost, zero read as O -- still unambiguous
+    ("X15", 1.5),       # decimals are only ever 0 or 5
+    ("XO", None),       # a single digit is not enough
+    ("X17", None),      # not a half-step value
+    ("X8.0", None),     # out of the game's x1.0-x3.0 range ('3' misread)
+    ("SCORE", None),
+    ("", None),
+])
+def test_parse_multiplier(text, expected):
+    from automaton_attack.session import parse_multiplier
+
+    assert parse_multiplier(text) == expected

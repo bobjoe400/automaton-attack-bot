@@ -111,7 +111,13 @@ class Matching:
     phrase_cutoff: float = 0.80
     phrase_min_length: int = 10
     # Clean OCR that matched nothing is typed verbatim above this length.
-    fallback_min_length: int = 8
+    # 6 covers the shortest event words seen so far (BANANA, GRALLA).
+    fallback_min_length: int = 6
+    # Below this score a match is a guess, and a guess must not block the
+    # word: a stable read with only a weak match gets the verbatim read
+    # typed as well (see Engine). HYPOTHERMIA was lost to a weak fuzzy
+    # steal that suppressed the fallback tier.
+    strong_match: float = 0.90
 
 
 @dataclass(frozen=True)
@@ -120,9 +126,18 @@ class Behaviour:
 
     scan_interval: float = 0.05      # live: seconds between screen grabs
     replay_stride: int = 15          # replay: scan every Nth frame (~4/s @60fps)
-    dedup_radius: int = 120          # px; same word near same spot = same word
-    dedup_ttl: float = 3.0           # seconds
-    key_delay: tuple[float, float] = (0.010, 0.030)  # per-key jitter, seconds
+    # Words drift toward the platform, so a typed word can walk out of a
+    # small dedup radius within the TTL and get typed twice -- four words
+    # double-billed ~80 keys at the exact congestion moments of one round.
+    # Genuine same-word double spawns sit on opposite sides of the panel,
+    # far outside even this radius.
+    dedup_radius: int = 260          # px
+    dedup_ttl: float = 4.0           # seconds
+    # Full speed: no artificial inter-key delay. Keyboard bandwidth is the
+    # binding constraint in bursts (three phrases at once is ~120 keys in
+    # 4s), and we are not pretending to be human -- SendInput overhead is
+    # the only pacing left. --max-wpm is the opt-in throttle.
+    key_delay: tuple[float, float] = (0.0, 0.0)
     # Valve patched a pause-typing exploit in this minigame, so they do watch
     # it. Cap effective speed to something a fast human could produce.
     max_wpm: float = 0.0             # 0 disables the cap

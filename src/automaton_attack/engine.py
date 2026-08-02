@@ -33,6 +33,7 @@ import numpy as np
 from .config import Settings
 from .detect import Detection, Detector
 from .keyboard import DryRunTypist
+from .lexicon import Match, to_key
 
 
 @dataclass
@@ -127,6 +128,7 @@ class Engine:
         self.confirmer = Confirmer()
         self.stats = Stats()
         self.last_detections: list[Detection] = []
+        self._previous_raw_keys: set[str] = set()
         # How a decided word becomes keystrokes. The default types inline;
         # live mode replaces this with TypingWorker.submit so the scan loop
         # never blocks on the keyboard.
@@ -137,13 +139,27 @@ class Engine:
     # automaton reaches this point, so distance to it is time-to-live.
     # Spawns from below start close and are urgent immediately.
     PLATFORM = (0.5, 0.66)
+    # Rough conversion factors for the deadline estimate: automatons cross
+    # about half the panel in a ~4s word lifetime, and a keystroke costs
+    # ~22ms with jitter.
+    APPROACH_SPEED = 0.12       # panel-fractions per second
+    SECONDS_PER_KEY = 0.003     # SendInput overhead; no artificial delay
 
     def _urgency(self, detection: Detection) -> float:
+        """Smaller = must start typing sooner.
+
+        Deadline minus service time, not bare distance: a 30-key voice
+        line needs ~0.7s of keyboard before it completes, so it must
+        start earlier than a 4-key word at the same range. Two phrases
+        died this exact way -- queued behind each other while both fell.
+        """
         panel_w, panel_h = self.settings.geometry.panel_size
         bx, by, bw, bh = detection.box
         dx = (bx + bw / 2) / panel_w - self.PLATFORM[0]
         dy = (by + bh / 2) / panel_h - self.PLATFORM[1]
-        return dx * dx + dy * dy
+        deadline = (dx * dx + dy * dy) ** 0.5 / self.APPROACH_SPEED
+        keys = len(detection.match.keystrokes) if detection.match else 0
+        return deadline - keys * self.SECONDS_PER_KEY
 
     def process(self, timestamp: float,
                 frame: np.ndarray) -> list[TypedWord]:
@@ -174,10 +190,54 @@ class Engine:
             self.dispatch(word)
             self.stats.record(word)
             typed.append(word)
+        typed.extend(self._insure_weak_matches(timestamp, detections))
         # Update after the loop: a word must survive a full scan-to-scan gap,
         # not be confirmed by its own detection.
         self.confirmer.update(detections)
         return typed
+
+    def _insure_weak_matches(self, timestamp: float,
+                             detections: list[Detection]) -> list[TypedWord]:
+        """Also type the verbatim read when its match is only a guess.
+
+        A word missing from the corpus gets fuzzy-stolen by whatever scores
+        >=0.62, and that wrong guess used to suppress the verbatim fallback
+        entirely -- HYPOTHERMIA died behind a weak steal. A read that
+        repeats identically across scans is what is on screen, so when its
+        best match is weak, the verbatim read is typed too: one of the two
+        completes the word, and the loser is stray keys.
+        """
+        matching = self.settings.matching
+        current: set[str] = set()
+        insured = []
+        for detection in detections:
+            key = to_key(detection.raw)
+            if len(key) < matching.fallback_min_length:
+                continue
+            current.add(key)
+            match = detection.match
+            if (match is None or match.source == "fallback"
+                    or match.score >= matching.strong_match):
+                continue    # pure fallbacks have their own gate (Confirmer)
+            if self.settings.safe_mode:
+                continue
+            if key not in self._previous_raw_keys:
+                continue    # not stable yet; misreads vary frame to frame
+            verbatim = Match(key, 0.0, "fallback")
+            if verbatim.keystrokes == match.keystrokes:
+                continue
+            if self.deduper.seen(key, detection.pos):
+                continue
+            self.deduper.mark(key, detection.pos)
+            word = TypedWord(timestamp,
+                             Detection(box=detection.box, raw=detection.raw,
+                                       match=verbatim),
+                             verbatim.keystrokes)
+            self.dispatch(word)
+            self.stats.record(word)
+            insured.append(word)
+        self._previous_raw_keys = current
+        return insured
 
     def run(self, frames: Iterable[tuple[float, np.ndarray]]
             ) -> Iterator[TypedWord]:

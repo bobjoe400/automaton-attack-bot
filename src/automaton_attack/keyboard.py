@@ -61,8 +61,8 @@ class DirectInputTypist:
     def _pace(self) -> float:
         """Seconds per character implied by the WPM cap (0 = uncapped).
 
-        Valve patched a pause-typing exploit in this minigame in July 2026, so
-        the leaderboard is watched. A cap keeps output within human range.
+        The default is uncapped, full machine speed. --max-wpm is the
+        opt-in throttle for anyone who wants human-plausible pacing.
         """
         wpm = self.behaviour.max_wpm
         if wpm <= 0:
@@ -72,8 +72,10 @@ class DirectInputTypist:
     def type(self, text: str) -> None:
         for char in text:
             self._pydirectinput.press(char)
-            delay = random.uniform(*self.behaviour.key_delay)
-            time.sleep(max(delay, self._min_seconds_per_char))
+            delay = max(random.uniform(*self.behaviour.key_delay),
+                        self._min_seconds_per_char)
+            if delay > 0:
+                time.sleep(delay)
         self.typed.append(text)
 
     def click(self, x: int, y: int) -> None:
@@ -97,6 +99,13 @@ class TypingWorker(threading.Thread):
     with the time the word spent waiting.
     """
 
+    # Under load, weak guesses lose their seat: keyboard time is the scarce
+    # resource, and a 0.67 match from a fly-in partial usually gets retyped
+    # correctly a scan later anyway. Verbatim/fallback words are exempt --
+    # they are the only shot at out-of-corpus words.
+    TRIAGE_DEPTH = 3
+    TRIAGE_BELOW = 0.75
+
     def __init__(self, typist, urgency: Callable, on_typed: Callable | None = None,
                  stale_after: float = 4.0,
                  clock: Callable[[], float] = time.monotonic) -> None:
@@ -107,6 +116,7 @@ class TypingWorker(threading.Thread):
         self.stale_after = stale_after
         self.clock = clock
         self.dropped_stale = 0
+        self.dropped_triage = 0
         self._pending: list[tuple[object, float]] = []
         self._condition = threading.Condition()
         self._stopped = False
@@ -135,9 +145,22 @@ class TypingWorker(threading.Thread):
             if waited > self.stale_after:
                 self.dropped_stale += 1
                 continue
+            if self._triage(word):
+                self.dropped_triage += 1
+                continue
             self.typist.type(word.keystrokes)
             if self.on_typed:
                 self.on_typed(word, waited)
+
+    def _triage(self, word) -> bool:
+        with self._condition:
+            backlog = len(self._pending)
+        if backlog < self.TRIAGE_DEPTH:
+            return False
+        match = word.detection.match
+        if match is None or match.source == "fallback":
+            return False
+        return match.score < self.TRIAGE_BELOW
 
     def stop(self, timeout: float = 5.0) -> None:
         """Stop immediately; pending words belong to a round that is over."""

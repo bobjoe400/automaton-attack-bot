@@ -22,6 +22,7 @@ Two things share the words' colour and must not reach OCR:
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import cv2
@@ -73,6 +74,12 @@ class Detector:
         self._calibrated: tuple | None = None   # last good HUD-derived range
         self.last_anchor: autocolor.ColorAnchor | None = None
         self._mask_history: deque[tuple[float, np.ndarray]] = deque()
+        # Blobs are OCRed concurrently when the backend can take it (an
+        # OcrPool); a busy screen has 6-10 blobs at ~50 ms each.
+        workers = getattr(backend, "size", 1)
+        self._ocr_executor = (ThreadPoolExecutor(max_workers=workers,
+                                                 thread_name_prefix="ocr")
+                              if workers > 1 else None)
 
     @property
     def active_range(self) -> tuple:
@@ -109,7 +116,15 @@ class Detector:
         return mask
 
     def blobs(self, mask: np.ndarray) -> list[tuple[int, int, int, int]]:
-        """Merge letters into word-sized boxes and filter out noise."""
+        """Merge letters into word-sized boxes and filter out noise.
+
+        A component TALLER than one text line is not noise -- it is words
+        stacked on top of each other (automatons converge, their labels
+        pile up). Rejecting tall components made whole clusters invisible
+        until the words drifted apart, which is how a five-word pile-up at
+        0:04 on the clock cost a combo. Tall components are split into
+        text lines instead.
+        """
         merged = cv2.dilate(mask, self._kernel)
         count, _, stats, _ = cv2.connectedComponentsWithStats(merged)
         blobs = self.settings.blobs
@@ -118,15 +133,56 @@ class Detector:
             bx, by, bw, bh, area = stats[i]
             if area < blobs.min_area or bw < blobs.min_width:
                 continue
-            if not blobs.min_height < bh < blobs.max_height:
+            if bh <= blobs.min_height:
                 continue
-            # Sparse speckle (automaton bodies) is not text; every one of
-            # these that reaches OCR costs ~50 ms of scan latency.
-            roi = mask[by:by + bh, bx:bx + bw]
-            if roi.mean() / 255.0 < blobs.min_fill:
-                continue
-            boxes.append((int(bx), int(by), int(bw), int(bh)))
+            candidates = ([(int(bx), int(by), int(bw), int(bh))]
+                          if bh < blobs.max_height
+                          else self._split_lines(mask, bx, by, bw, bh))
+            for cx, cy, cw, ch in candidates:
+                if cw < blobs.min_width:
+                    continue
+                if not blobs.min_height < ch < blobs.max_height:
+                    continue
+                # Sparse speckle (automaton bodies) is not text; every one
+                # that reaches OCR costs ~50 ms of scan latency.
+                roi = mask[cy:cy + ch, cx:cx + cw]
+                if roi.size == 0 or roi.mean() / 255.0 < blobs.min_fill:
+                    continue
+                boxes.append((cx, cy, cw, ch))
         return boxes
+
+    def _split_lines(self, mask: np.ndarray, bx: int, by: int,
+                     bw: int, bh: int) -> list[tuple[int, int, int, int]]:
+        """Split a tall component into its text lines.
+
+        Bands of lit rows in the pre-dilation mask, separated by empty
+        rows, are individual words; each band's box is re-fit to its lit
+        columns. Words whose rows genuinely interleave cannot be split
+        and stay lost until they separate -- but the common case is a
+        clean few-pixel gap between stacked labels.
+        """
+        region = mask[by:by + bh, bx:bx + bw]
+        lit_rows = region.max(axis=1) > 0
+        bands = []
+        start = None
+        for row, lit in enumerate(lit_rows):
+            if lit and start is None:
+                start = row
+            elif not lit and start is not None:
+                bands.append((start, row))
+                start = None
+        if start is not None:
+            bands.append((start, len(lit_rows)))
+
+        out = []
+        for row0, row1 in bands:
+            band = region[row0:row1]
+            columns = np.flatnonzero(band.max(axis=0) > 0)
+            if columns.size == 0:
+                continue
+            out.append((bx + int(columns[0]), by + row0,
+                        int(columns[-1] - columns[0] + 1), row1 - row0))
+        return out
 
     def _static_mask(self, mask: np.ndarray,
                      timestamp: float | None) -> np.ndarray | None:
@@ -156,12 +212,77 @@ class Detector:
         static = self._static_mask(mask, timestamp)
         if static is not None:
             mask[static > 0] = 0
-        results = []
-        for box in self.blobs(mask):
-            raw = self.backend.read(prepare(mask, box))
+        boxes = self.blobs(mask)
+        if self._ocr_executor is not None and len(boxes) > 1:
+            raws = list(self._ocr_executor.map(
+                lambda box: self.backend.read(prepare(mask, box)), boxes))
+        else:
+            raws = [self.backend.read(prepare(mask, box)) for box in boxes]
+        detections = []
+        for box, raw in zip(boxes, raws):
             match = self.lexicon.match(
                 raw, allow_fallback=not self.settings.safe_mode
             ) if raw else None
-            if match or include_unmatched:
-                results.append(Detection(box=box, raw=raw, match=match))
-        return results
+            detections.append(Detection(box=box, raw=raw, match=match))
+        detections = self._stitch_wrapped_lines(detections)
+        return [d for d in detections if d.match or include_unmatched]
+
+    # A wrapped phrase's second line starts within a line-height below the
+    # first; a merge is accepted only on a confident corpus match.
+    STITCH_MIN_SCORE = 0.85
+
+    def _stitch_wrapped_lines(
+            self, detections: list[Detection]) -> list[Detection]:
+        """Rejoin phrases that wrap onto two on-screen lines.
+
+        The line splitter (rightly) separates stacked words, but a LONG
+        voice line wraps into exactly the same shape. If two vertically
+        adjacent, horizontally overlapping lines jointly match the corpus
+        convincingly -- and they weren't both confident matches on their
+        own -- they are one phrase, typed in reading order: top line
+        first. 'There's a fine line between bravery and stupidity.' died
+        as two separately-typed fallback lines to make the point.
+        """
+        if len(detections) < 2:
+            return detections
+        detections = sorted(detections, key=lambda d: (d.box[1], d.box[0]))
+        max_gap = self.settings.blobs.max_height
+        consumed = [False] * len(detections)
+        out = []
+        for i, top in enumerate(detections):
+            if consumed[i]:
+                continue
+            merged = None
+            for j in range(i + 1, len(detections)):
+                if consumed[j]:
+                    continue
+                below = detections[j]
+                gap = below.box[1] - (top.box[1] + top.box[3])
+                if gap > max_gap:
+                    break
+                if gap < -5:
+                    continue
+                overlap = (min(top.box[0] + top.box[2],
+                               below.box[0] + below.box[2])
+                           - max(top.box[0], below.box[0]))
+                if overlap < 0.5 * min(top.box[2], below.box[2]):
+                    continue
+                if (top.match and top.match.score >= 0.9
+                        and below.match and below.match.score >= 0.9):
+                    continue        # two independent, confident words
+                joined = f"{top.raw.strip()} {below.raw.strip()}"
+                match = self.lexicon.match(joined, allow_fallback=False)
+                if match is None or match.score < self.STITCH_MIN_SCORE:
+                    continue
+                x0 = min(top.box[0], below.box[0])
+                y0 = top.box[1]
+                x1 = max(top.box[0] + top.box[2],
+                         below.box[0] + below.box[2])
+                y1 = below.box[1] + below.box[3]
+                merged = Detection(box=(x0, y0, x1 - x0, y1 - y0),
+                                   raw=joined, match=match)
+                consumed[j] = True
+                break
+            out.append(merged if merged else top)
+            consumed[i] = True
+        return out

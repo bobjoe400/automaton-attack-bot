@@ -211,3 +211,47 @@ def test_words_nearest_the_platform_type_first():
     bottom_spawn = detection("LINA", 1.0, pos=(450, 900))
     typed, typist, _ = run_engine([[far_top, near_platform, bottom_spawn]])
     assert typist.typed == ["pudge", "lina", "bane"]
+
+
+# -- verbatim insurance ------------------------------------------------------
+def test_stable_read_with_weak_match_types_both():
+    """HYPOTHERMIA scenario: an out-of-corpus word gets fuzzy-stolen at a
+    weak score, and the wrong guess used to block the verbatim fallback.
+    Once the read proves stable, both are typed -- one of them wins."""
+    weak = detection("HYPNOTIZE", 0.65, raw="HYPOTHERMIA")
+    typed, typist, _ = run_engine([[weak], [weak]])
+    assert "hypnotize" in typist.typed          # the guess, on first sight
+    assert "hypothermia" in typist.typed        # the insurance, once stable
+
+
+def test_one_off_weak_match_gets_no_insurance():
+    """A single sighting can be a misread; insurance waits for stability."""
+    typed, typist, _ = run_engine([[detection("HYPNOTIZE", 0.65,
+                                              raw="HYPOTHERMIA")]])
+    assert typist.typed == ["hypnotize"]
+
+
+def test_strong_matches_get_no_insurance():
+    strong = detection("SILENCER", 0.93, raw="SLENCER")
+    typed, typist, _ = run_engine([[strong], [strong]])
+    assert typist.typed == ["silencer"]
+
+
+def test_short_weak_reads_get_no_insurance():
+    """'CIOAK'->CLOAK at 0.80 is a misread of a real word, not a gap; the
+    length floor keeps insurance off it."""
+    weak = detection("CLOAK", 0.80, raw="CIOAK")
+    typed, typist, _ = run_engine([[weak], [weak]])
+    assert typist.typed == ["cloak"]
+
+
+def test_long_phrases_win_the_tie_at_equal_range():
+    """Urgency is deadline MINUS service time, so at equal range the
+    longer keystroke burden starts first. (At full typing speed the
+    service term is small, but the tie-break still matters: two phrases
+    once died queued behind each other.)"""
+    phrase = detection("TOLD YOU A STORM WAS COMING!", 1.0, pos=(300, 300),
+                       source="phrase")
+    word = detection("AXE", 1.0, pos=(300, 300))
+    typed, typist, _ = run_engine([[word, phrase]])
+    assert typist.typed[0] == "toldyouastormwascoming"

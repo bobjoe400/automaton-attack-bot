@@ -31,12 +31,16 @@ import numpy as np
 
 from . import autocolor
 from .config import Settings
-from .ocr import OcrBackend
+from .ocr import OcrBackend, make_digit_reader
 
 # Regions in panel fractions (x0, y0, x1, y1), measured off the reference
 # footage. Fractions survive any panel size the auto-locator finds.
 TITLE_REGION = (0.26, 0.135, 0.74, 0.26)     # covers both modal titles
-SCORE_ROW_REGION = (0.227, 0.272, 0.767, 0.313)   # "Total Score      750"
+# "Total Score      17,770" -- padded vertically: a few pixels of geometry
+# drift once clipped the digits into a phantom '86'.
+SCORE_ROW_REGION = (0.227, 0.263, 0.767, 0.322)
+TIMER_REGION = (0.40, 0.02, 0.585, 0.085)    # the "0:24" above TIME
+MULTIPLIER_REGION = (0.04, 0.102, 0.23, 0.143)  # the "x1.5" under SCORE
 PLAY_BUTTON = (0.4965, 0.857)                # start screen
 PLAY_AGAIN_BUTTON = (0.4965, 0.790)          # game-over screen
 
@@ -68,6 +72,42 @@ def _letters(text: str) -> str:
 # Applied only to the text after the SCORE label, never to words.
 _DIGIT_LOOKALIKES = str.maketrans({"O": "0", "I": "1", "L": "1", "l": "1",
                                    "B": "8", "S": "5", "Z": "2"})
+
+
+def parse_multiplier(text: str) -> float | None:
+    """Combo multiplier from an "x1.5"-style read.
+
+    Multipliers are always digit-dot-digit with the decimal in {0, 5}, so
+    a read that lost its separator ('X3O' for x3.0 -- note the 0 read as
+    O) is still unambiguous once lookalikes are translated.
+    """
+    text = text.upper().translate(_DIGIT_LOOKALIKES)
+    value = None
+    match = re.search(r"(\d)\s?[.,]\s?(\d)", text)
+    if match:
+        value = float(f"{match.group(1)}.{match.group(2)}")
+    else:
+        digits = [c for c in text if c.isdigit()]
+        if len(digits) == 2:
+            value = float(f"{digits[0]}.{digits[1]}")
+    # The game's multipliers run x1.0-x3.0 in half steps; anything else is
+    # a misread ('3' has come back as '8', 'SCORE' as '5C0RE').
+    if value is None or value * 2 != int(value * 2) or not 1.0 <= value <= 3.0:
+        return None
+    return value
+
+
+def parse_timer(text: str) -> int | None:
+    """Seconds remaining from a "0:24"-style read.
+
+    The round clock never exceeds 1:00; larger values ('1:37' was logged
+    once) are misreads, not times.
+    """
+    match = re.search(r"(\d{1,2})[:.](\d{2})", text)
+    if not match:
+        return None
+    seconds = int(match.group(1)) * 60 + int(match.group(2))
+    return seconds if seconds <= 60 else None
 
 
 def parse_score(row: str) -> int | None:
@@ -199,14 +239,22 @@ class SessionTracker:
         self.backend = backend
         self.settings = settings
         self.ocr_interval = ocr_interval
+        # Digits (score, timer) read best through tesseract's whitelist on
+        # the raw grayscale; None when tesseract isn't installed.
+        self.digit_reader = make_digit_reader()
         self.state = GameState.UNKNOWN
         self.transitions: list[Transition] = []
         self.final_score: int | None = None
-        # The game-over score counts up when the modal appears; a single
-        # read mid-animation is wrong (150 observed for a final 1,150).
-        # settled = the same non-None value on two consecutive reads.
+        # The game-over score counts up when the modal appears, and the
+        # animation can repeat a value long enough to fool a short
+        # agreement window (478 was reported for a final 17,770). Settling
+        # now needs a 3-read identical tail, at least 2 s after the modal
+        # appeared, on the LARGEST value seen at least twice -- the score
+        # only counts upward, so a mid-animation value can never be the
+        # maximum once the animation passes it.
         self.score_settled = False
-        self._last_score_read: int | None = None
+        self._score_reads: list[int] = []
+        self._game_over_at: float | None = None
         self._last_ocr = -1e9
 
     # -- geometry helpers -------------------------------------------------
@@ -238,11 +286,63 @@ class SessionTracker:
                               interpolation=cv2.INTER_CUBIC)
         return self.backend.read(upscaled)
 
+    def _read_digits(self, region: np.ndarray) -> str:
+        """Digits off a raw crop via the digit reader (None-safe)."""
+        if self.digit_reader is None or region.size == 0:
+            return ""
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        upscaled = cv2.resize(255 - gray, None, fx=3, fy=3,
+                              interpolation=cv2.INTER_CUBIC)
+        return self.digit_reader.read(upscaled)
+
     def read_final_score(self, frame: np.ndarray) -> int | None:
-        """Read "Total Score NNN" off the game-over screen."""
-        row = self._read_bright_text(
-            self._region(self._panel(frame), SCORE_ROW_REGION))
+        """Read "Total Score NNN" off the game-over screen.
+
+        The digit reader (tesseract, digits whitelist, raw grayscale) reads
+        comma-grouped totals exactly where the general backend garbles them
+        ('17,770' came back '17,7%'); fall back to the thresholded general
+        read when tesseract isn't installed.
+        """
+        region = self._region(self._panel(frame), SCORE_ROW_REGION)
+        digits = "".join(c for c in self._read_digits(region) if c.isdigit())
+        if digits:
+            return int(digits)
+        row = self._read_bright_text(region)
         return parse_score(row)
+
+    def read_multiplier(self, frame: np.ndarray) -> float | None:
+        """The combo multiplier under the score, or None when unreadable.
+
+        Logged during play so a combo loss is findable in the log (and the
+        footage) without OCRing the whole recording after the fact. The
+        glyphs are small, so this read uses a lower threshold and a larger
+        upscale than the modal-title path.
+        """
+        region = self._region(self._panel(frame), MULTIPLIER_REGION)
+        if region.size == 0 or self.backend is None:
+            return None
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(gray, 110, 255, cv2.THRESH_BINARY)
+        if int(mask.sum()) // 255 < 20:
+            return None
+        upscaled = cv2.resize(255 - mask, None, fx=3, fy=3,
+                              interpolation=cv2.INTER_CUBIC)
+        # A white margin helps the recogniser on tiny glyph strips.
+        upscaled = cv2.copyMakeBorder(upscaled, 12, 12, 12, 12,
+                                      cv2.BORDER_CONSTANT, value=255)
+        return parse_multiplier(self.backend.read(upscaled))
+
+    def read_timer(self, frame: np.ndarray) -> int | None:
+        """Seconds left on the round clock, or None when unreadable.
+
+        The clock is the game's own timestamp: logging words against it is
+        exact regardless of capture latency or where a recording starts.
+        """
+        region = self._region(self._panel(frame), TIMER_REGION)
+        text = self._read_digits(region)
+        if not text:
+            text = self._read_bright_text(region)
+        return parse_timer(text)
 
     def _hud_visible(self, hsv: np.ndarray) -> bool:
         """True only when the gameplay HUD -- not lookalike UI -- is up.
@@ -282,20 +382,44 @@ class SessionTracker:
         title = _letters(self._read_bright_text(
             self._region(panel, TITLE_REGION)))
         if _fuzzy_contains(title, GAME_OVER_KEY):
-            # Read until two consecutive reads agree, then FREEZE: later
-            # frames can misread (a lost leading digit turned 5685 into
-            # 685 after the fact) and must not overwrite a settled value.
+            if self.state is not GameState.GAME_OVER:
+                self._game_over_at = timestamp
+            # Read until settled, then FREEZE: later frames can misread (a
+            # lost leading digit turned 5685 into 685 after the fact) and
+            # must not overwrite a settled value.
             if not self.score_settled:
                 score = self.read_final_score(frame)
-                self.score_settled = (score is not None
-                                      and score == self._last_score_read)
-                self._last_score_read = score
                 if score is not None:
-                    self.final_score = score
+                    self._score_reads.append(score)
+                self._update_score(timestamp)
             return self._advance(timestamp, GameState.GAME_OVER)
         if _fuzzy_contains(title, START_TITLE_KEY):
             return self._advance(timestamp, GameState.START_SCREEN)
         return self._advance(timestamp, GameState.UNKNOWN)
+
+    def _update_score(self, timestamp: float) -> None:
+        """Best current estimate, and whether it can be trusted as final.
+
+        The best estimate at any moment is the largest value that has been
+        read at least twice (a single wild misread cannot become final).
+        It is *settled* once the last three reads all agree on it and the
+        modal has been up for 2 s -- long enough for the count-up to pass
+        any value it briefly repeated.
+        """
+        from collections import Counter
+
+        counts = Counter(self._score_reads)
+        confirmed = [value for value, count in counts.items() if count >= 2]
+        if not confirmed:
+            return
+        best = max(confirmed)
+        self.final_score = best
+        tail = self._score_reads[-3:]
+        since = (self._game_over_at if self._game_over_at is not None
+                 else timestamp)
+        age = timestamp - since
+        self.score_settled = (len(tail) == 3 and set(tail) == {best}
+                              and age >= 2.0)
 
     def _advance(self, timestamp: float, state: GameState) -> GameState:
         if state is not self.state:
@@ -304,5 +428,6 @@ class SessionTracker:
             if state is GameState.PLAYING:
                 self.final_score = None
                 self.score_settled = False
-                self._last_score_read = None
+                self._score_reads = []
+                self._game_over_at = None
         return state

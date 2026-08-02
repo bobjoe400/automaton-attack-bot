@@ -4,8 +4,14 @@ A computer-vision bot that plays **Automaton Attack**, the typing minigame in
 Dota 2's Dark Carnival: Midnight Run event (Chapter 3, Engine Car).
 
 It watches the screen, finds the yellow target words, reads them, matches them
-against a corpus of hero/item/ability names and ~39k in-game voice lines, and
+against a corpus of hero/item/ability names and ~40k in-game voice lines, and
 types them.
+
+Best validated live result: **35,935** — a perfect round (zero combo losses),
+roughly 25× the leaderboard high score it first encountered. The road there is
+documented in the commit history: every combo loss across seven live rounds
+was scrubbed on footage, root-caused, fixed, and pinned with a regression
+test.
 
 ## Install
 
@@ -122,8 +128,10 @@ framebuffer is not.
   loses multipliers, guessing doesn't.
 - Voice lines score far more than single words (100 vs 10 observed).
 - Set Dota to English or the words are localised and nothing matches.
-- Valve patched a pause-typing exploit in this minigame in July 2026, so the
-  leaderboard is watched. `--max-wpm` keeps output in human range.
+- Typing runs at full machine speed by default. `--max-wpm` is the opt-in
+  throttle if you want human-plausible pacing (Valve has patched exploits in
+  this minigame before, so the leaderboard is at least occasionally watched —
+  your call).
 
 ## Development
 
