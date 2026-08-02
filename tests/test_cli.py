@@ -1,6 +1,6 @@
 """CLI argument plumbing."""
 
-from automaton_attack.cli import build_parser
+from automaton_attack_bot.cli import build_parser
 
 
 def test_bare_invocation_is_the_play_command():
@@ -28,9 +28,8 @@ def test_subcommands_still_dispatch():
     assert args.clip == "clip.mp4"
 
 
-def test_python_dash_m_automaton_alias():
-    import automaton
+def test_python_dash_m_runs_the_cli():
+    from automaton_attack_bot import __main__
+    from automaton_attack_bot.cli import main
 
-    from automaton_attack.cli import main
-
-    assert automaton.main is main
+    assert __main__.main is main

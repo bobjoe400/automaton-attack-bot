@@ -6,7 +6,7 @@ Two corpora, consulted in order:
   odota/dotaconstants (plus ``data/custom_vocab.txt`` adjustments);
 * the phrase corpus -- ~39k in-game voice lines, built from mdiller/dotabase.
 
-Both are downloaded and cached by :mod:`automaton_attack.corpus` on first use.
+Both are downloaded and cached by :mod:`automaton_attack_bot.corpus` on first use.
 
 Everything is matched on a *key*: the uppercase, letters-and-digits-only form
 of the string. The minigame lets you skip spaces and punctuation while typing,

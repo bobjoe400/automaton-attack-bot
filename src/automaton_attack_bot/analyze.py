@@ -151,6 +151,6 @@ class ReadLog:
                     "stable read matched convincingly.")
         lines.append(
             "\nIf one of these is a real word, add it to "
-            "src/automaton_attack/data/custom_vocab.txt (it applies on the "
+            "src/automaton_attack_bot/data/custom_vocab.txt (it applies on the "
             "next run, no rebuild needed).")
         return "\n".join(lines)

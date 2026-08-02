@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from automaton_attack.config import Settings
-from automaton_attack.detect import Detector
-from automaton_attack.lexicon import Lexicon
+from automaton_attack_bot.config import Settings
+from automaton_attack_bot.detect import Detector
+from automaton_attack_bot.lexicon import Lexicon
 
 
 class NoOcr:
@@ -132,8 +132,8 @@ def test_wrapped_phrase_lines_are_stitched_in_reading_order():
     """A long voice line wraps to two on-screen lines; typed separately
     (bottom first, by urgency) it never completes. Stitched, it types top
     line first as one phrase."""
-    from automaton_attack.detect import Detection
-    from automaton_attack.lexicon import Lexicon
+    from automaton_attack_bot.detect import Detection
+    from automaton_attack_bot.lexicon import Lexicon
 
     lexicon = Lexicon(
         ["Placeholder"],
@@ -153,8 +153,8 @@ def test_wrapped_phrase_lines_are_stitched_in_reading_order():
 
 
 def test_stacked_independent_words_are_not_stitched():
-    from automaton_attack.detect import Detection
-    from automaton_attack.lexicon import Lexicon, Match
+    from automaton_attack_bot.detect import Detection
+    from automaton_attack_bot.lexicon import Lexicon, Match
 
     lexicon = Lexicon(["Earth Spirit", "Phantom Assassin"])
     detector = Detector(lexicon, NoOcr(), Settings())
@@ -166,8 +166,8 @@ def test_stacked_independent_words_are_not_stitched():
 
 
 def test_distant_lines_are_not_stitched():
-    from automaton_attack.detect import Detection
-    from automaton_attack.lexicon import Lexicon
+    from automaton_attack_bot.detect import Detection
+    from automaton_attack_bot.lexicon import Lexicon
 
     lexicon = Lexicon(
         ["Placeholder"],
@@ -186,8 +186,8 @@ def test_three_line_wrapped_phrase_is_stitched():
     APPLE IN / YER MOUTH'); the chain stitcher must absorb all of them,
     not just a pair. A DIVINE RAPIER hidden behind this exact cluster
     escaped while the phrase resolved late."""
-    from automaton_attack.detect import Detection
-    from automaton_attack.lexicon import Lexicon
+    from automaton_attack_bot.detect import Detection
+    from automaton_attack_bot.lexicon import Lexicon
 
     lexicon = Lexicon(
         ["Placeholder"],

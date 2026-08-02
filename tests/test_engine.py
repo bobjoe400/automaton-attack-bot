@@ -3,11 +3,11 @@
 import numpy as np
 import pytest
 
-from automaton_attack.config import Settings
-from automaton_attack.detect import Detection
-from automaton_attack.engine import Confirmer, Deduper, Engine
-from automaton_attack.keyboard import DryRunTypist
-from automaton_attack.lexicon import Match
+from automaton_attack_bot.config import Settings
+from automaton_attack_bot.detect import Detection
+from automaton_attack_bot.engine import Confirmer, Deduper, Engine
+from automaton_attack_bot.keyboard import DryRunTypist
+from automaton_attack_bot.lexicon import Match
 
 
 def detection(name, score, pos=(100, 100), raw=None, source="vocab"):
@@ -181,7 +181,7 @@ def test_dry_run_typist_sends_nothing_live():
 
 # -- monitor picking -------------------------------------------------------
 def test_pick_monitor_prefers_the_overlapping_screen():
-    from automaton_attack.capture import pick_monitor
+    from automaton_attack_bot.capture import pick_monitor
 
     monitors = [
         {"left": 0, "top": 0, "width": 3840, "height": 1080},      # virtual
@@ -197,7 +197,7 @@ def test_pick_monitor_prefers_the_overlapping_screen():
 
 
 def test_pick_monitor_with_no_overlap_returns_none():
-    from automaton_attack.capture import pick_monitor
+    from automaton_attack_bot.capture import pick_monitor
 
     monitors = [
         {"left": 0, "top": 0, "width": 1920, "height": 1080},
@@ -279,7 +279,7 @@ def test_embedded_words_type_from_weak_cluster_reads():
     """VISAGE died with one letter typed inside an interleaved pile-up.
     A weak merged read containing a vocab key letter-perfect types that
     word immediately."""
-    from automaton_attack.lexicon import Lexicon
+    from automaton_attack_bot.lexicon import Lexicon
 
     settings = Settings()
     detector = FakeDetector([], settings)

@@ -10,10 +10,10 @@ import cv2
 import numpy as np
 import pytest
 
-from automaton_attack import autocolor
-from automaton_attack.config import Settings
-from automaton_attack.detect import Detector
-from automaton_attack.lexicon import Lexicon
+from automaton_attack_bot import autocolor
+from automaton_attack_bot.config import Settings
+from automaton_attack_bot.detect import Detector
+from automaton_attack_bot.lexicon import Lexicon
 
 
 SETTINGS = Settings()
