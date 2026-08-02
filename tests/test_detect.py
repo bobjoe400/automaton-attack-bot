@@ -82,3 +82,31 @@ def test_moving_text_is_not_suppressed(detector):
         frame[y0 + 500:y0 + 522, x0 + px:x0 + px + 120] = block
         result = detector.detect(frame, include_unmatched=True, timestamp=t)
     assert result                   # last scan still sees it
+
+
+def test_stacked_words_are_split_into_lines(detector):
+    """Automatons converge and their labels pile up; a two-line stack must
+    yield two word boxes, not be rejected as 'too tall'."""
+    mask = np.zeros((965, 963), np.uint8)
+    mask[400:422, 300:420] = text_like_roi()
+    mask[430:452, 320:460] = text_like_roi(w=140)
+    boxes = detector.blobs(mask)
+    assert len(boxes) == 2
+    heights = sorted(box[3] for box in boxes)
+    assert all(12 < h < 45 for h in heights)
+    tops = sorted(box[1] for box in boxes)
+    assert abs(tops[0] - 400) <= 4
+    assert abs(tops[1] - 430) <= 4
+
+
+def test_three_line_stack_splits_into_three(detector):
+    mask = np.zeros((965, 963), np.uint8)
+    for i in range(3):
+        mask[400 + i * 30:422 + i * 30, 300:420] = text_like_roi()
+    assert len(detector.blobs(mask)) == 3
+
+
+def test_single_words_are_unaffected_by_the_splitter(detector):
+    mask = np.zeros((965, 963), np.uint8)
+    mask[400:422, 300:420] = text_like_roi()
+    assert len(detector.blobs(mask)) == 1

@@ -116,7 +116,15 @@ class Detector:
         return mask
 
     def blobs(self, mask: np.ndarray) -> list[tuple[int, int, int, int]]:
-        """Merge letters into word-sized boxes and filter out noise."""
+        """Merge letters into word-sized boxes and filter out noise.
+
+        A component TALLER than one text line is not noise -- it is words
+        stacked on top of each other (automatons converge, their labels
+        pile up). Rejecting tall components made whole clusters invisible
+        until the words drifted apart, which is how a five-word pile-up at
+        0:04 on the clock cost a combo. Tall components are split into
+        text lines instead.
+        """
         merged = cv2.dilate(mask, self._kernel)
         count, _, stats, _ = cv2.connectedComponentsWithStats(merged)
         blobs = self.settings.blobs
@@ -125,15 +133,56 @@ class Detector:
             bx, by, bw, bh, area = stats[i]
             if area < blobs.min_area or bw < blobs.min_width:
                 continue
-            if not blobs.min_height < bh < blobs.max_height:
+            if bh <= blobs.min_height:
                 continue
-            # Sparse speckle (automaton bodies) is not text; every one of
-            # these that reaches OCR costs ~50 ms of scan latency.
-            roi = mask[by:by + bh, bx:bx + bw]
-            if roi.mean() / 255.0 < blobs.min_fill:
-                continue
-            boxes.append((int(bx), int(by), int(bw), int(bh)))
+            candidates = ([(int(bx), int(by), int(bw), int(bh))]
+                          if bh < blobs.max_height
+                          else self._split_lines(mask, bx, by, bw, bh))
+            for cx, cy, cw, ch in candidates:
+                if cw < blobs.min_width:
+                    continue
+                if not blobs.min_height < ch < blobs.max_height:
+                    continue
+                # Sparse speckle (automaton bodies) is not text; every one
+                # that reaches OCR costs ~50 ms of scan latency.
+                roi = mask[cy:cy + ch, cx:cx + cw]
+                if roi.size == 0 or roi.mean() / 255.0 < blobs.min_fill:
+                    continue
+                boxes.append((cx, cy, cw, ch))
         return boxes
+
+    def _split_lines(self, mask: np.ndarray, bx: int, by: int,
+                     bw: int, bh: int) -> list[tuple[int, int, int, int]]:
+        """Split a tall component into its text lines.
+
+        Bands of lit rows in the pre-dilation mask, separated by empty
+        rows, are individual words; each band's box is re-fit to its lit
+        columns. Words whose rows genuinely interleave cannot be split
+        and stay lost until they separate -- but the common case is a
+        clean few-pixel gap between stacked labels.
+        """
+        region = mask[by:by + bh, bx:bx + bw]
+        lit_rows = region.max(axis=1) > 0
+        bands = []
+        start = None
+        for row, lit in enumerate(lit_rows):
+            if lit and start is None:
+                start = row
+            elif not lit and start is not None:
+                bands.append((start, row))
+                start = None
+        if start is not None:
+            bands.append((start, len(lit_rows)))
+
+        out = []
+        for row0, row1 in bands:
+            band = region[row0:row1]
+            columns = np.flatnonzero(band.max(axis=0) > 0)
+            if columns.size == 0:
+                continue
+            out.append((bx + int(columns[0]), by + row0,
+                        int(columns[-1] - columns[0] + 1), row1 - row0))
+        return out
 
     def _static_mask(self, mask: np.ndarray,
                      timestamp: float | None) -> np.ndarray | None:
