@@ -318,7 +318,15 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                   "on the captured monitor? (--debug shows every OCR read)")
 
         if state is GameState.PLAYING:
+            if not seen_playing or previous is not GameState.PLAYING:
+                # New round: the multiplier legitimately restarts at x1.0;
+                # comparing across rounds printed phantom COMBO LOST lines.
+                last_multiplier = None
             seen_playing = True
+            # Words first -- telemetry OCR must never delay a keystroke.
+            for word in engine.process(timestamp, frame):
+                if worker is None:      # threaded mode prints at type time
+                    print(_describe(word))
             # Log the combo so a loss is findable in the log (and footage)
             # without a post-hoc OCR scrub of the whole recording.
             if timestamp - last_multiplier_read >= 0.5:
@@ -337,9 +345,6 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                         print(f"[{timestamp:7.2f}s] combo x{multiplier}"
                               f"{clock_note}")
                     last_multiplier = multiplier
-            for word in engine.process(timestamp, frame):
-                if worker is None:      # threaded mode prints at type time
-                    print(_describe(word))
             if debug:
                 for d in engine.last_detections:
                     print(f"    ({d.box[0]:4},{d.box[1]:4}) ocr={d.raw!r} "

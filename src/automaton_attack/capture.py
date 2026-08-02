@@ -126,13 +126,44 @@ class ScreenSource:
             self.width, self.height = mon["width"], mon["height"]
 
     def frames(self) -> Iterator[tuple[float, np.ndarray]]:
+        """Yield the freshest frame available, captured on its own thread.
+
+        Capturing inline added ~20-40ms plus the inter-scan sleep to every
+        cycle. A producer thread grabs continuously; the consumer always
+        processes the newest frame and never waits on the screen.
+        """
+        import threading
+
+        state = {"seq": 0, "timestamp": 0.0, "frame": None, "stop": False}
+        condition = threading.Condition()
         start = time.monotonic()
-        with self._mss.mss() as sct:
-            monitor = sct.monitors[self.monitor_index]
+
+        def producer() -> None:
+            with self._mss.mss() as sct:
+                monitor = sct.monitors[self.monitor_index]
+                while not state["stop"]:
+                    frame = np.asarray(sct.grab(monitor))[:, :, :3]
+                    with condition:
+                        state["seq"] += 1
+                        state["timestamp"] = time.monotonic() - start
+                        state["frame"] = frame
+                        condition.notify_all()
+                    time.sleep(self.interval)
+
+        thread = threading.Thread(target=producer, daemon=True,
+                                  name="capture")
+        thread.start()
+        last_seen = 0
+        try:
             while True:
-                frame = np.asarray(sct.grab(monitor))[:, :, :3]  # BGRA -> BGR
-                yield time.monotonic() - start, frame
-                time.sleep(self.interval)
+                with condition:
+                    while state["seq"] == last_seen:
+                        condition.wait(0.5)
+                    last_seen = state["seq"]
+                    timestamp, frame = state["timestamp"], state["frame"]
+                yield timestamp, frame
+        finally:
+            state["stop"] = True
 
     def grab(self) -> np.ndarray:
         """Single screenshot."""

@@ -124,7 +124,8 @@ class Matching:
 class Behaviour:
     """Loop pacing, dedup and keystroke delivery."""
 
-    scan_interval: float = 0.05      # live: seconds between screen grabs
+    scan_interval: float = 0.015     # live: capture-thread pacing; the scan
+                                     # loop itself is OCR-bound
     replay_stride: int = 15          # replay: scan every Nth frame (~4/s @60fps)
     # Words drift toward the platform, so a typed word can walk out of a
     # small dedup radius within the TTL and get typed twice -- four words
