@@ -2,7 +2,7 @@
 
     automaton doctor              check the environment
     automaton replay CLIP         run detection over a recording (never types)
-    automaton run                 live capture; add --live to send keystrokes
+    automaton run                 watch the screen and play (--dry-run to rehearse)
     automaton match TEXT          ask the lexicon what a read resolves to
     automaton calibrate           dump mask/blob diagnostics from a frame
 """

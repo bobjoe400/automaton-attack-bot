@@ -65,7 +65,7 @@ Other commands:
 | --- | --- |
 | `doctor` | Checks dependencies, OCR backends and data files |
 | `replay CLIP` | Runs detection over a recording; never types |
-| `run` | Live capture; dry run unless `--live` |
+| `run` | Watch the screen and play; `--dry-run` to rehearse |
 | `match TEXT` | Asks the lexicon what an OCR read resolves to |
 | `calibrate` | Dumps mask/blob diagnostics from one frame |
 | `update-data` | Rebuilds the word corpora from upstream (run after a patch) |
