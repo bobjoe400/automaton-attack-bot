@@ -28,7 +28,7 @@ jobs:
 
       - name: Build
         run: |
-          uv sync --extra live
+          uv sync
           uv run pyinstaller automaton.spec --noconfirm
 
       # The exe is a windowed app: a shell won't wait for it or see its

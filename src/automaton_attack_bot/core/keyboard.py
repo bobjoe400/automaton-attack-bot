@@ -49,7 +49,7 @@ class DirectInputTypist:
             import pydirectinput
         except ImportError as exc:  # pragma: no cover - env dependent
             raise RuntimeError(
-                "pydirectinput is not installed. Run: uv sync --extra live"
+                "pydirectinput is not installed. Run: uv sync"
             ) from exc
         pydirectinput.PAUSE = 0
         self._pydirectinput = pydirectinput

@@ -12,14 +12,14 @@ dependencies = [
     # OCR. Ships its own ONNX models, so `uv sync` is the whole install --
     # no system packages, nothing for a new cloner to set up by hand.
     "rapidocr-onnxruntime>=1.3",
+    # Screen capture + keystroke delivery. Typing IS the product, so these
+    # are core: an optional extra once got silently dropped by an auto-sync
+    # and produced an exe that could not type.
+    "mss>=9.0",
+    "pydirectinput>=1.0.4; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
-# Screen capture + keystroke delivery. Not needed for offline replay/tests.
-live = [
-    "mss>=9.0",
-    "pydirectinput>=1.0.4",
-]
 # Alternative OCR backend. Also needs the tesseract binary installed
 # separately; only worth it if you already have it.
 tesseract = [

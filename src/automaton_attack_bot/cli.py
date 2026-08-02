@@ -192,7 +192,7 @@ def cmd_doctor(args) -> int:
             print(f"  [ok]   {module} ({purpose})")
         except ImportError:
             print(f"  [--]   {module} missing -- live mode needs "
-                  f"'uv sync --extra live'")
+                  f"'uv sync'")
 
     for label, path in (("vocabulary", corpus.vocab_path()),
                         ("voice lines", corpus.phrases_path())):
@@ -311,7 +311,7 @@ def cmd_run(args, stop_event=None) -> int:
         try:
             typist = make_typist(True, settings.behaviour)
         except RuntimeError as exc:
-            # A clone without the live extras still gets a useful run.
+            # A clone missing the input libs still gets a useful run.
             print(f"note: {exc}")
             print("Falling back to a dry run.")
             live = False

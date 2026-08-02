@@ -14,7 +14,7 @@ Requires [uv](https://docs.astral.sh/uv/) — no system packages.
 
 ```bash
 git clone git@github.com:bobjoe400/automaton-attack-bot.git && cd automaton-attack-bot
-uv sync --extra live
+uv sync
 uv run automaton doctor
 ```
 

@@ -123,7 +123,7 @@ class ScreenSource:
             import mss
         except ImportError as exc:  # pragma: no cover - env dependent
             raise RuntimeError(
-                "mss is not installed. Run: uv sync --extra live"
+                "mss is not installed. Run: uv sync"
             ) from exc
         self._mss = mss
         self.monitor_index = monitor
