@@ -130,7 +130,25 @@ class TypingWorker(threading.Thread):
             self._pending.append((word, self.clock()))
             self._condition.notify()
 
+    @staticmethod
+    def _boost_priority() -> None:
+        """Keystrokes must never wait behind OCR compute (Windows).
+
+        The typing thread's time slices were getting starved when the
+        scan pipeline saturated the CPU; visible as inter-key stutter.
+        """
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            THREAD_PRIORITY_HIGHEST = 2
+            kernel32.SetThreadPriority(kernel32.GetCurrentThread(),
+                                       THREAD_PRIORITY_HIGHEST)
+        except Exception:   # noqa: BLE001 - best effort, non-Windows etc.
+            pass
+
     def run(self) -> None:
+        self._boost_priority()
         while True:
             with self._condition:
                 while not self._pending and not self._stopped:
