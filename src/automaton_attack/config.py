@@ -152,6 +152,34 @@ class Settings:
         )
         return replace(self, geometry=geometry, blobs=blobs)
 
+    def with_panel(self, panel: Box) -> Settings:
+        """Re-anchor geometry on an auto-located panel.
+
+        HUD boxes and blob filters scale with the panel itself rather than
+        the full frame: the panel's render size is what sets glyph size.
+        """
+        ref = Geometry()
+        ref_w, ref_h = ref.panel_size
+        x0, y0, x1, y1 = panel
+        sx, sy = (x1 - x0) / ref_w, (y1 - y0) / ref_h
+        geometry = Geometry(
+            panel=panel,
+            hud_boxes=tuple(
+                (round(bx0 * sx), round(by0 * sy),
+                 round(bx1 * sx), round(by1 * sy))
+                for bx0, by0, bx1, by1 in ref.hud_boxes),
+        )
+        ref_blobs = Blobs()
+        blobs = Blobs(
+            dilate_kernel=(max(1, round(ref_blobs.dilate_kernel[0] * sy)),
+                           max(1, round(ref_blobs.dilate_kernel[1] * sx))),
+            min_area=max(1, round(ref_blobs.min_area * sx * sy)),
+            min_width=max(1, round(ref_blobs.min_width * sx)),
+            min_height=max(1, round(ref_blobs.min_height * sy)),
+            max_height=max(2, round(ref_blobs.max_height * sy)),
+        )
+        return replace(self, geometry=geometry, blobs=blobs)
+
     # -- persistence -----------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

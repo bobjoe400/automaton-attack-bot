@@ -9,6 +9,7 @@ Drop recordings here as:
 | --- | --- |
 | `clip1.mp4` | The single-word phase: one target on screen at a time |
 | `clip2.mp4` | The multi-word phase: overlapping simultaneous targets |
+| `fullgame.mp4` | A whole session: start screen, one full round, game-over screen (its expected total score is pinned in `tests/test_session.py`) |
 
 Then:
 

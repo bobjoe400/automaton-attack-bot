@@ -33,6 +33,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-auto-color", action="store_true",
                         help="use the configured HSV range as-is instead of "
                              "calibrating it against the HUD text each scan")
+    parser.add_argument("--no-locate-panel", action="store_true",
+                        help="trust the configured panel geometry instead of "
+                             "finding the minigame frame on screen")
     parser.add_argument("--debug", action="store_true",
                         help="print every blob, matched or not")
 
@@ -70,6 +73,14 @@ def build_parser() -> argparse.ArgumentParser:
                      help="mss monitor index (default: 1)")
     run.add_argument("--max-wpm", type=float,
                      help="cap typing speed, in words per minute")
+    run.add_argument("--auto-start", action="store_true",
+                     help="click PLAY / PLAY AGAIN when a start or "
+                          "game-over screen is showing")
+    run.add_argument("--rounds", type=int, default=1,
+                     help="with --auto-start: rounds to play before "
+                          "exiting (default: 1)")
+    run.add_argument("--keep-running", action="store_true",
+                     help="don't exit when the game-over screen appears")
     _add_common(run)
 
     match = subs.add_parser("match", help="resolve text against the lexicon")
@@ -193,10 +204,94 @@ def cmd_update_data(args) -> int:
     return 0
 
 
-def cmd_replay(args) -> int:
-    from .capture import VideoSource
+def _drive(frames, lexicon, backend, settings, typist, *,
+           locate=True, auto_start=False, rounds=1,
+           stop_on_game_over=True, debug=False):
+    """Session-aware scan loop shared by replay and run.
+
+    Tracks game state alongside word detection: types only while the game is
+    playing, optionally clicks PLAY / PLAY AGAIN, reports the final score,
+    and re-anchors geometry when the panel is found away from its configured
+    position.
+    """
     from .detect import Detector
     from .engine import Engine
+    from .session import GameState, SessionTracker, locate_panel
+
+    detector = Detector(lexicon, backend, settings)
+    engine = Engine(detector, typist, settings)
+    tracker = SessionTracker(backend, settings)
+    located = False
+    rounds_done = 0
+    last_click = -1e9
+
+    for timestamp, frame in frames:
+        if locate and not located:
+            panel = locate_panel(frame)
+            if panel:
+                drift = max(abs(a - b) for a, b in
+                            zip(panel, settings.geometry.panel))
+                if drift > 8:
+                    settings = settings.with_panel(panel)
+                    detector = Detector(lexicon, backend, settings)
+                    engine.detector = detector
+                    tracker = SessionTracker(backend, settings)
+                    print(f"Located minigame panel at {panel} "
+                          f"(configured geometry re-anchored).")
+                located = True
+
+        previous = tracker.state
+        state = tracker.classify(timestamp, frame)
+        if state is not previous and debug:
+            print(f"[{timestamp:7.2f}s] --- {state.value} ---")
+
+        if state is GameState.PLAYING:
+            for word in engine.process(timestamp, frame):
+                print(_describe(word))
+            continue
+
+        if state is GameState.GAME_OVER and previous is not GameState.GAME_OVER:
+            rounds_done += 1
+            score = tracker.final_score
+            print(f"[{timestamp:7.2f}s] GAME OVER -- total score: "
+                  f"{score if score is not None else 'unreadable'}")
+            if rounds_done >= rounds and stop_on_game_over:
+                break
+
+        if (auto_start and timestamp - last_click > 2.0
+                and state in (GameState.START_SCREEN, GameState.GAME_OVER)):
+            if state is GameState.GAME_OVER and rounds_done >= rounds:
+                continue
+            x, y = tracker.button_position(state)
+            label = ("PLAY" if state is GameState.START_SCREEN
+                     else "PLAY AGAIN")
+            if typist.live:
+                print(f"[{timestamp:7.2f}s] clicking {label} at ({x}, {y})")
+            else:
+                print(f"[{timestamp:7.2f}s] [dry-run] would click {label} "
+                      f"at ({x}, {y})")
+            typist.click(x, y)
+            last_click = timestamp
+
+    return engine, tracker
+
+
+def _summarise(engine, tracker) -> None:
+    stats = engine.stats
+    print(f"\n{stats.typed} words typed over {stats.frames} scans "
+          f"({dict(stats.by_source)}); "
+          f"{stats.suppressed_duplicate} duplicates suppressed, "
+          f"{stats.awaiting_confirmation} held for confirmation.")
+    if tracker.transitions:
+        path = " -> ".join(t.state.value for t in tracker.transitions)
+        print(f"Session: {path}"
+              + (f"; final score {tracker.final_score}"
+                 if tracker.final_score is not None else ""))
+
+
+def cmd_replay(args) -> int:
+    from .capture import VideoSource
+    from .keyboard import DryRunTypist
     from .ocr import get_backend
 
     settings = _settings_from_args(args)
@@ -210,41 +305,19 @@ def cmd_replay(args) -> int:
           f"OCR={backend.name}, scanning every "
           f"{settings.behaviour.replay_stride} frames\n")
 
-    detector = Detector(lexicon, backend, settings)
-    engine = Engine(detector, settings=settings)
-
-    if args.debug:
-        _replay_debug(source, detector, engine)
-    else:
-        for word in engine.run(source.frames()):
-            print(_describe(word))
-
-    stats = engine.stats
-    print(f"\n{stats.typed} words typed over {stats.frames} scans "
-          f"({dict(stats.by_source)}); "
-          f"{stats.suppressed_duplicate} duplicates suppressed, "
-          f"{stats.awaiting_confirmation} held for confirmation.")
+    engine, tracker = _drive(
+        source.frames(), lexicon, backend, settings,
+        DryRunTypist(settings.behaviour),
+        locate=not args.no_locate_panel,
+        stop_on_game_over=False,
+        debug=args.debug,
+    )
+    _summarise(engine, tracker)
     return 0
-
-
-def _replay_debug(source, detector, engine) -> None:
-    for timestamp, frame in source.frames():
-        blobs = detector.blobs(detector.word_mask(frame))
-        if blobs:
-            print(f"[{timestamp:7.2f}s] {len(blobs)} blob(s)")
-        for detection in detector.detect(frame, include_unmatched=True):
-            bx, by, bw, bh = detection.box
-            target = detection.match.name if detection.match else "-"
-            print(f"    ({bx:4},{by:4}) {bw:3}x{bh:<3} ocr={detection.raw!r}"
-                  f" -> {target} ({detection.score:.2f})")
-        for word in engine.process(timestamp, frame):
-            print(f"    >>> TYPE {word.keystrokes!r}")
 
 
 def cmd_run(args) -> int:
     from .capture import ScreenSource
-    from .detect import Detector
-    from .engine import Engine
     from .keyboard import make_typist
     from .ocr import get_backend
 
@@ -254,22 +327,25 @@ def cmd_run(args) -> int:
 
     source = ScreenSource(args.monitor, settings.behaviour.scan_interval)
     settings = settings.for_resolution(source.width, source.height)
-    detector = Detector(lexicon, backend, settings)
-    engine = Engine(detector, make_typist(args.live, settings.behaviour),
-                    settings)
+    typist = make_typist(args.live, settings.behaviour)
 
     mode = "TYPING ENABLED" if args.live else "DRY RUN (pass --live to type)"
     print(f"Live capture on monitor {args.monitor} "
           f"({source.width}x{source.height}), OCR={backend.name}. {mode}. "
           f"Ctrl+C to stop.\n")
     try:
-        for word in engine.run(source.frames()):
-            print(_describe(word))
+        engine, tracker = _drive(
+            source.frames(), lexicon, backend, settings, typist,
+            locate=not args.no_locate_panel,
+            auto_start=args.auto_start,
+            rounds=args.rounds,
+            stop_on_game_over=not args.keep_running,
+            debug=args.debug,
+        )
     except KeyboardInterrupt:
         print("\nStopped.")
-    stats = engine.stats
-    print(f"{stats.typed} words typed over {stats.frames} scans "
-          f"({dict(stats.by_source)}).")
+        return 0
+    _summarise(engine, tracker)
     return 0
 
 

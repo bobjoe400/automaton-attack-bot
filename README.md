@@ -51,6 +51,19 @@ Actually play:
 uv run automaton run --live
 ```
 
+Fully hands-off — clicks PLAY on the start screen, plays a round, reports the
+final score and exits when the game-over screen appears (`--rounds N` to play
+several):
+
+```bash
+uv run automaton run --live --auto-start
+```
+
+The bot is session-aware: it finds the minigame panel on screen by its frame
+(so the window doesn't have to be at the reference position), recognises the
+start screen, gameplay and the game-over screen, only types while a round is
+actually running, and reads the final score off the results screen.
+
 Other commands:
 
 | Command | What it does |

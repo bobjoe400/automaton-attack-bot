@@ -21,9 +21,13 @@ class DryRunTypist:
     def __init__(self, behaviour: Behaviour | None = None) -> None:
         self.behaviour = behaviour or Behaviour()
         self.typed: list[str] = []
+        self.clicked: list[tuple[int, int]] = []
 
     def type(self, text: str) -> None:
         self.typed.append(text)
+
+    def click(self, x: int, y: int) -> None:
+        self.clicked.append((x, y))
 
 
 class DirectInputTypist:
@@ -42,6 +46,7 @@ class DirectInputTypist:
         self._pydirectinput = pydirectinput
         self.behaviour = behaviour or Behaviour()
         self.typed: list[str] = []
+        self.clicked: list[tuple[int, int]] = []
         self._min_seconds_per_char = self._pace()
 
     def _pace(self) -> float:
@@ -61,6 +66,10 @@ class DirectInputTypist:
             delay = random.uniform(*self.behaviour.key_delay)
             time.sleep(max(delay, self._min_seconds_per_char))
         self.typed.append(text)
+
+    def click(self, x: int, y: int) -> None:
+        self._pydirectinput.click(x, y)
+        self.clicked.append((x, y))
 
 
 def make_typist(live: bool, behaviour: Behaviour | None = None):

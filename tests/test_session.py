@@ -1,0 +1,151 @@
+"""Game-state tracking, panel location, and the full-game regression.
+
+The clip-marked tests use ``clips/fullgame.mp4``: start screen, one full
+round, game-over screen with a total score of 750.
+"""
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from automaton_attack.config import Settings
+from automaton_attack.session import (
+    GameState,
+    SessionTracker,
+    _fuzzy_contains,
+    locate_panel,
+)
+
+FULLGAME = Path("clips") / "fullgame.mp4"
+FULLGAME_SCORE = 750
+
+
+# -- unit ------------------------------------------------------------------
+@pytest.mark.parametrize("read, key", [
+    ("AUTOMATONATTACK", "AUTOMATONATTACK"),
+    ("AUTOMATONATACK", "AUTOMATONATTACK"),    # observed rapidocr read
+    ("CAMEOVER", "GAMEOVER"),                 # observed rapidocr read
+    ("GAMEOVER", "GAMEOVER"),
+])
+def test_observed_title_misreads_still_match(read, key):
+    assert _fuzzy_contains(read, key)
+
+
+@pytest.mark.parametrize("read, key", [
+    ("", "GAMEOVER"),
+    ("RAZO", "GAMEOVER"),           # stray gameplay word in the title strip
+    ("HIGHSCORES", "AUTOMATONATTACK"),
+])
+def test_unrelated_text_does_not_match(read, key):
+    assert not _fuzzy_contains(read, key)
+
+
+def test_button_positions_land_inside_the_panel():
+    settings = Settings()
+    tracker = SessionTracker(backend=None, settings=settings)
+    x0, y0, x1, y1 = settings.geometry.panel
+    for state in (GameState.START_SCREEN, GameState.GAME_OVER):
+        bx, by = tracker.button_position(state)
+        assert x0 < bx < x1
+        assert y0 < by < y1
+    # PLAY sits lower than PLAY AGAIN on their respective screens
+    assert (tracker.button_position(GameState.START_SCREEN)[1]
+            > tracker.button_position(GameState.GAME_OVER)[1])
+
+
+def test_with_panel_rescales_geometry_and_blobs():
+    settings = Settings()
+    # same panel, doubled in size
+    x0, y0, x1, y1 = settings.geometry.panel
+    scaled = settings.with_panel((100, 50, 100 + 2 * (x1 - x0),
+                                  50 + 2 * (y1 - y0)))
+    assert scaled.geometry.panel[0] == 100
+    assert scaled.blobs.min_width == settings.blobs.min_width * 2
+    assert scaled.geometry.hud_boxes[0][2] == settings.geometry.hud_boxes[0][2] * 2
+
+
+def test_locate_panel_rejects_a_blank_frame():
+    assert locate_panel(np.zeros((1080, 1920, 3), np.uint8)) is None
+
+
+# -- full-game clip ----------------------------------------------------------
+pytestmark_clips = pytest.mark.clips
+
+
+@pytest.fixture(scope="module")
+def fullgame_frames():
+    if not FULLGAME.exists():
+        pytest.skip(f"{FULLGAME} not present")
+    import cv2
+
+    capture = cv2.VideoCapture(str(FULLGAME))
+    fps = capture.get(cv2.CAP_PROP_FPS) or 60
+
+    def grab(seconds):
+        capture.set(cv2.CAP_PROP_POS_FRAMES, int(seconds * fps))
+        ok, frame = capture.read()
+        assert ok, f"no frame at {seconds}s"
+        return frame
+
+    yield grab
+    capture.release()
+
+
+@pytest.fixture(scope="module")
+def tracker():
+    from automaton_attack.ocr import OcrUnavailable, get_backend
+
+    try:
+        backend = get_backend("auto")
+    except (OcrUnavailable, Exception) as exc:  # noqa: BLE001
+        pytest.skip(f"no OCR backend: {exc}")
+    return SessionTracker(backend, Settings())
+
+
+@pytest.mark.clips
+def test_locate_panel_matches_measured_geometry(fullgame_frames):
+    located = locate_panel(fullgame_frames(1.0))
+    assert located is not None
+    for got, expected in zip(located, Settings().geometry.panel):
+        assert abs(got - expected) <= 10
+
+
+@pytest.mark.clips
+def test_states_classify_across_the_round(fullgame_frames, tracker):
+    assert tracker.classify(1.0, fullgame_frames(1.0)) is GameState.START_SCREEN
+    assert tracker.classify(30.0, fullgame_frames(30.0)) is GameState.PLAYING
+    assert tracker.classify(70.4, fullgame_frames(70.4)) is GameState.GAME_OVER
+
+
+@pytest.mark.clips
+def test_final_score_is_read(fullgame_frames, tracker):
+    assert tracker.read_final_score(fullgame_frames(70.4)) == FULLGAME_SCORE
+
+
+@pytest.mark.clips
+def test_full_game_replay_walks_the_whole_lifecycle():
+    from automaton_attack.capture import VideoSource
+    from automaton_attack.detect import Detector
+    from automaton_attack.engine import Engine
+    from automaton_attack.lexicon import Lexicon
+    from automaton_attack.ocr import get_backend
+
+    settings = Settings()
+    backend = get_backend("auto")
+    lexicon = Lexicon.load()
+    source = VideoSource(FULLGAME, settings.behaviour.replay_stride)
+    settings = settings.for_resolution(source.width, source.height)
+    detector = Detector(lexicon, backend, settings)
+    engine = Engine(detector, settings=settings)
+    tracker = SessionTracker(backend, settings)
+
+    for timestamp, frame in source.frames():
+        if tracker.classify(timestamp, frame) is GameState.PLAYING:
+            engine.process(timestamp, frame)
+
+    states = [t.state for t in tracker.transitions]
+    assert states == [GameState.START_SCREEN, GameState.PLAYING,
+                      GameState.GAME_OVER]
+    assert tracker.final_score == FULLGAME_SCORE
+    assert engine.stats.typed >= 40      # a full round of words came through
