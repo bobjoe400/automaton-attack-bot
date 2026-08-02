@@ -33,6 +33,7 @@ import numpy as np
 from .config import Settings
 from .detect import Detection, Detector
 from .keyboard import DryRunTypist
+from .lexicon import Match, to_key
 
 
 @dataclass
@@ -127,6 +128,7 @@ class Engine:
         self.confirmer = Confirmer()
         self.stats = Stats()
         self.last_detections: list[Detection] = []
+        self._previous_raw_keys: set[str] = set()
         # How a decided word becomes keystrokes. The default types inline;
         # live mode replaces this with TypingWorker.submit so the scan loop
         # never blocks on the keyboard.
@@ -174,10 +176,54 @@ class Engine:
             self.dispatch(word)
             self.stats.record(word)
             typed.append(word)
+        typed.extend(self._insure_weak_matches(timestamp, detections))
         # Update after the loop: a word must survive a full scan-to-scan gap,
         # not be confirmed by its own detection.
         self.confirmer.update(detections)
         return typed
+
+    def _insure_weak_matches(self, timestamp: float,
+                             detections: list[Detection]) -> list[TypedWord]:
+        """Also type the verbatim read when its match is only a guess.
+
+        A word missing from the corpus gets fuzzy-stolen by whatever scores
+        >=0.62, and that wrong guess used to suppress the verbatim fallback
+        entirely -- HYPOTHERMIA died behind a weak steal. A read that
+        repeats identically across scans is what is on screen, so when its
+        best match is weak, the verbatim read is typed too: one of the two
+        completes the word, and the loser is stray keys.
+        """
+        matching = self.settings.matching
+        current: set[str] = set()
+        insured = []
+        for detection in detections:
+            key = to_key(detection.raw)
+            if len(key) < matching.fallback_min_length:
+                continue
+            current.add(key)
+            match = detection.match
+            if (match is None or match.source == "fallback"
+                    or match.score >= matching.strong_match):
+                continue    # pure fallbacks have their own gate (Confirmer)
+            if self.settings.safe_mode:
+                continue
+            if key not in self._previous_raw_keys:
+                continue    # not stable yet; misreads vary frame to frame
+            verbatim = Match(key, 0.0, "fallback")
+            if verbatim.keystrokes == match.keystrokes:
+                continue
+            if self.deduper.seen(key, detection.pos):
+                continue
+            self.deduper.mark(key, detection.pos)
+            word = TypedWord(timestamp,
+                             Detection(box=detection.box, raw=detection.raw,
+                                       match=verbatim),
+                             verbatim.keystrokes)
+            self.dispatch(word)
+            self.stats.record(word)
+            insured.append(word)
+        self._previous_raw_keys = current
+        return insured
 
     def run(self, frames: Iterable[tuple[float, np.ndarray]]
             ) -> Iterator[TypedWord]:

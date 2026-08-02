@@ -111,7 +111,13 @@ class Matching:
     phrase_cutoff: float = 0.80
     phrase_min_length: int = 10
     # Clean OCR that matched nothing is typed verbatim above this length.
-    fallback_min_length: int = 8
+    # 6 covers the shortest event words seen so far (BANANA, GRALLA).
+    fallback_min_length: int = 6
+    # Below this score a match is a guess, and a guess must not block the
+    # word: a stable read with only a weak match gets the verbatim read
+    # typed as well (see Engine). HYPOTHERMIA was lost to a weak fuzzy
+    # steal that suppressed the fallback tier.
+    strong_match: float = 0.90
 
 
 @dataclass(frozen=True)

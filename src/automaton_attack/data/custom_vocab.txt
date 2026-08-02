@@ -21,6 +21,7 @@ Banana
 Imperia
 Gralla
 Boots
+Hypothermia
 
 # The game renders this hero's CURRENT name; dotaconstants carries the old
 # one. Both stay in vocab -- exact reads beat fuzzy steals either way.
