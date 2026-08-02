@@ -2,6 +2,26 @@
 
 How the bot works, end to end.
 
+## Code layout
+
+```
+src/automaton_attack_bot/
+  cli.py       argument parsing and the command handlers
+  logbook.py   two-level session log (full detail to file, signal to console)
+  analyze.py   offline miss forensics for recordings
+  corpus.py    word-corpus download/build/cache, with data/ holding
+               custom_vocab.txt
+  core/        the real-time bot: config, capture, ocr, autocolor, detect,
+               lexicon, engine, keyboard, session, and drive (the shared
+               scan-decide-type loop)
+  gui/         the control panel: app (window), tasks (worker thread with
+               stdout teed into the panel), feed (log-line -> status)
+```
+
+The GUI owns no bot logic: its buttons dispatch the same command functions
+the terminal uses, and its status display is parsed from the session's own
+log lines.
+
 ## The pipeline
 
 Perception, decision and action run as a real-time pipeline of cooperating

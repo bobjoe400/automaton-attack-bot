@@ -20,7 +20,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Iterable, Literal
 
-from . import corpus
+from .. import corpus
 from .config import Matching
 
 Source = Literal["vocab", "phrase", "fallback"]

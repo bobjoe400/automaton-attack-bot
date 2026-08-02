@@ -1,8 +1,8 @@
 """Post-round read analysis."""
 
 from automaton_attack_bot.analyze import ReadLog
-from automaton_attack_bot.detect import Detection
-from automaton_attack_bot.lexicon import Match
+from automaton_attack_bot.core.detect import Detection
+from automaton_attack_bot.core.lexicon import Match
 
 
 def det(raw, name=None, score=0.0):

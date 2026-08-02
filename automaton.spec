@@ -1,8 +1,9 @@
 # PyInstaller build recipe: `uv run pyinstaller automaton.spec --noconfirm`
 #
-# Onedir on purpose: with onnxruntime + OpenCV aboard, a onefile exe would
-# unpack hundreds of MB to temp on every launch. The release workflow zips
-# the folder instead.
+# Onefile: the release asset is a single automaton.exe. It self-extracts to
+# temp on each launch (~2s measured) -- paid once per session, and worth it
+# for a one-file download. tkinter rides along for the control panel, which
+# is what a bare double-click opens.
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
@@ -17,7 +18,7 @@ a = Analysis(
     datas=datas,
     binaries=binaries,
     hiddenimports=hiddenimports + ["mss", "pydirectinput"],
-    excludes=["tkinter", "matplotlib", "PIL.ImageTk"],
+    excludes=["matplotlib", "PIL.ImageTk"],
 )
 
 pyz = PYZ(a.pure)
@@ -25,14 +26,8 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    exclude_binaries=True,
-    name="automaton",
-    console=True,
-)
-
-coll = COLLECT(
-    exe,
     a.binaries,
     a.datas,
     name="automaton",
+    console=True,
 )

@@ -5,7 +5,7 @@
 #
 # The binary is built ONLY here -- never on a dev machine -- so anyone can
 # verify a download came from this repo's code with:
-#   gh attestation verify automaton-attack-bot-win64.zip --repo bobjoe400/automaton-attack-bot
+#   gh attestation verify automaton.exe --repo bobjoe400/automaton-attack-bot
 
 name: release
 
@@ -33,24 +33,23 @@ jobs:
 
       - name: Smoke test
         run: |
-          dist/automaton/automaton.exe --version
-          dist/automaton/automaton.exe match "PUDGE"
+          dist/automaton.exe --version
+          dist/automaton.exe match "PUDGE"
 
-      - name: Package
+      - name: Checksum
         run: |
-          Compress-Archive -Path dist/automaton -DestinationPath automaton-attack-bot-win64.zip
-          (Get-FileHash automaton-attack-bot-win64.zip -Algorithm SHA256).Hash.ToLower() + " *automaton-attack-bot-win64.zip" | Out-File -Encoding ascii SHA256SUMS
+          (Get-FileHash dist/automaton.exe -Algorithm SHA256).Hash.ToLower() + " *automaton.exe" | Out-File -Encoding ascii SHA256SUMS
 
       - name: Attest provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: automaton-attack-bot-win64.zip
+          subject-path: dist/automaton.exe
 
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
           gh release create "${{ github.ref_name }}"
-          automaton-attack-bot-win64.zip SHA256SUMS
+          dist/automaton.exe SHA256SUMS
           --title "${{ github.ref_name }}"
           --generate-notes

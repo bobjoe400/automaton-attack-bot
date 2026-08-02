@@ -2,11 +2,11 @@
 
 import time
 
-from automaton_attack_bot.config import Settings
-from automaton_attack_bot.detect import Detection
-from automaton_attack_bot.engine import Engine, TypedWord
-from automaton_attack_bot.keyboard import DryRunTypist, TypingWorker
-from automaton_attack_bot.lexicon import Match
+from automaton_attack_bot.core.config import Settings
+from automaton_attack_bot.core.detect import Detection
+from automaton_attack_bot.core.engine import Engine, TypedWord
+from automaton_attack_bot.core.keyboard import DryRunTypist, TypingWorker
+from automaton_attack_bot.core.lexicon import Match
 
 
 def word(name, pos, timestamp=0.0):
@@ -93,8 +93,8 @@ def test_weak_guesses_are_triaged_when_the_queue_is_deep():
     """Keyboard time is the scarce resource under load: a 0.67 fly-in
     partial gets retyped correctly a scan later anyway, so it loses its
     seat when 3+ words are waiting."""
-    from automaton_attack_bot.detect import Detection
-    from automaton_attack_bot.lexicon import Match
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Match
 
     typist = DryRunTypist()
     worker = TypingWorker(typist, urgency)
@@ -122,8 +122,8 @@ def test_weak_guesses_are_triaged_when_the_queue_is_deep():
 
 
 def test_weak_guesses_type_when_the_queue_is_shallow():
-    from automaton_attack_bot.detect import Detection
-    from automaton_attack_bot.lexicon import Match
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Match
 
     typist = DryRunTypist()
     worker = TypingWorker(typist, urgency)

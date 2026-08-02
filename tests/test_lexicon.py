@@ -2,8 +2,8 @@
 
 import pytest
 
-from automaton_attack_bot.config import Matching
-from automaton_attack_bot.lexicon import Lexicon, to_key
+from automaton_attack_bot.core.config import Matching
+from automaton_attack_bot.core.lexicon import Lexicon, to_key
 
 
 @pytest.fixture(scope="module")
@@ -132,7 +132,7 @@ def test_recent_patch_items_are_present(vocab_only):
 def test_ocr_output_is_ascii_safe():
     """PP-OCR emits CJK punctuation for glyph fragments; it must never
     reach the console (cp1252 crashes) or the matcher."""
-    from automaton_attack_bot.ocr import clean_text
+    from automaton_attack_bot.core.ocr import clean_text
 
     assert clean_text("TOWER\u3001") == "TOWER"
     assert clean_text("\u3001\uff0c") == ""

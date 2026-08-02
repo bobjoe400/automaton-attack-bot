@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
-from .lexicon import to_key
+from .core.lexicon import to_key
 
 STABLE_MIN_SIGHTINGS = 2
 STRONG_MATCH = 0.90
