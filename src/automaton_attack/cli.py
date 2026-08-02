@@ -243,7 +243,7 @@ def _drive(frames, lexicon, backend, settings, typist, *,
         from .keyboard import TypingWorker
 
         def emit(word, waited):
-            print(_describe(word) + f"  [queued {waited:.2f}s]")
+            LOG.trace(_describe(word) + f"  [queued {waited:.2f}s]")
 
         worker = TypingWorker(typist, engine._urgency, on_typed=emit)
         engine.dispatch = worker.submit
@@ -280,11 +280,11 @@ def _drive(frames, lexicon, backend, settings, typist, *,
         if worker is not None:
             worker.stop()
             if worker.dropped_stale:
-                print(f"{worker.dropped_stale} queued word(s) dropped as "
-                      f"stale.")
+                LOG.say(f"{worker.dropped_stale} queued word(s) dropped as "
+                        f"stale.")
             if worker.dropped_triage:
-                print(f"{worker.dropped_triage} weak guess(es) skipped "
-                      f"while the keyboard queue was deep.")
+                LOG.say(f"{worker.dropped_triage} weak guess(es) skipped "
+                        f"while the keyboard queue was deep.")
 
 
 def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
@@ -311,7 +311,7 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
             scan_ts, future = in_flight.popleft()
             for word in engine.process_detections(scan_ts, future.result()):
                 if worker is None:
-                    print(_describe(word))
+                    LOG.trace(_describe(word))
 
     for timestamp, frame in frames:
         if first_timestamp is None:
@@ -328,20 +328,20 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                     detector = Detector(lexicon, backend, settings)
                     engine.detector = detector
                     tracker = SessionTracker(backend, settings)
-                    print(f"Located minigame panel at {panel} "
-                          f"(configured geometry re-anchored).")
+                    LOG.say(f"Located minigame panel at {panel} "
+                            f"(configured geometry re-anchored).")
 
         previous = tracker.state
         state = tracker.classify(timestamp, frame)
         if state is not GameState.UNKNOWN:
             proven = True
         if state is not previous:
-            print(f"[{timestamp:7.2f}s] --- {state.value} ---")
+            LOG.say(f"[{timestamp:7.2f}s] --- {state.value} ---")
         if (not tracker.transitions and not hinted
                 and timestamp - first_timestamp > 5.0):
             hinted = True
-            print("Nothing recognised after 5s -- is the minigame visible "
-                  "on the captured monitor? (--debug shows every OCR read)")
+            LOG.say("Nothing recognised after 5s -- is the minigame visible "
+                    "on the captured monitor? (--debug shows every OCR read)")
 
         if state is GameState.PLAYING:
             if not seen_playing or previous is not GameState.PLAYING:
@@ -360,7 +360,7 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
             else:
                 for word in engine.process(timestamp, frame):
                     if worker is None:  # threaded mode prints at type time
-                        print(_describe(word))
+                        LOG.trace(_describe(word))
             # Log the combo so a loss is findable in the log (and footage)
             # without a post-hoc OCR scrub of the whole recording.
             if timestamp - last_multiplier_read >= 0.5:
@@ -372,16 +372,15 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                                   if clock is not None else "")
                     if (last_multiplier is not None
                             and multiplier < last_multiplier):
-                        print(f"[{timestamp:7.2f}s] !!! COMBO LOST "
-                              f"x{last_multiplier} -> x{multiplier}"
-                              f"{clock_note}")
+                        LOG.say(f"[{timestamp:7.2f}s] !!! COMBO LOST "
+                                f"x{last_multiplier} -> x{multiplier}"
+                                f"{clock_note}")
                     else:
-                        print(f"[{timestamp:7.2f}s] combo x{multiplier}"
-                              f"{clock_note}")
+                        LOG.say(f"[{timestamp:7.2f}s] combo x{multiplier}"
+                                f"{clock_note}")
                     last_multiplier = multiplier
-            if debug:
-                for d in engine.last_detections:
-                    print(f"    ({d.box[0]:4},{d.box[1]:4}) ocr={d.raw!r} "
+            for d in engine.last_detections:
+                LOG.trace(f"    ({d.box[0]:4},{d.box[1]:4}) ocr={d.raw!r} "
                           f"-> {d.name or '-'} ({d.score:.2f})")
             continue
 
@@ -400,10 +399,10 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                                        or timestamp - game_over_at > 5.0):
                 score_reported = True
                 score = tracker.final_score
-                print(f"[{timestamp:7.2f}s] GAME OVER -- total score: "
-                      f"{score if score is not None else 'unreadable'}"
-                      + ("" if seen_playing
-                         else " (stale: no round played yet)"))
+                LOG.say(f"[{timestamp:7.2f}s] GAME OVER -- total score: "
+                        f"{score if score is not None else 'unreadable'}"
+                        + ("" if seen_playing
+                           else " (stale: no round played yet)"))
                 if seen_playing:
                     rounds_done += 1
                     if rounds_done >= rounds and stop_on_game_over:
@@ -418,10 +417,10 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
             label = ("PLAY" if state is GameState.START_SCREEN
                      else "PLAY AGAIN")
             if typist.live:
-                print(f"[{timestamp:7.2f}s] clicking {label} at ({x}, {y})")
+                LOG.say(f"[{timestamp:7.2f}s] clicking {label} at ({x}, {y})")
             else:
-                print(f"[{timestamp:7.2f}s] [dry-run] would click {label} "
-                      f"at ({x}, {y})")
+                LOG.say(f"[{timestamp:7.2f}s] [dry-run] would click {label} "
+                        f"at ({x}, {y})")
             typist.click(x, y)
             last_click = timestamp
 
@@ -430,21 +429,30 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
 
 def _summarise(engine, tracker) -> None:
     stats = engine.stats
-    print(f"\n{stats.typed} words typed over {stats.frames} scans "
-          f"({dict(stats.by_source)}); "
-          f"{stats.suppressed_duplicate} duplicates suppressed, "
-          f"{stats.awaiting_confirmation} held for confirmation.")
+    LOG.say(f"\n{stats.typed} words typed over {stats.frames} scans "
+            f"({dict(stats.by_source)}); "
+            f"{stats.suppressed_duplicate} duplicates suppressed, "
+            f"{stats.awaiting_confirmation} held for confirmation.")
     if tracker.transitions:
         path = " -> ".join(t.state.value for t in tracker.transitions)
-        print(f"Session: {path}"
-              + (f"; final score {tracker.final_score}"
-                 if tracker.final_score is not None else ""))
+        LOG.say(f"Session: {path}"
+                + (f"; final score {tracker.final_score}"
+                   if tracker.final_score is not None else ""))
 
 
 def cmd_replay(args) -> int:
+    import datetime
+
     from .capture import VideoSource
     from .keyboard import DryRunTypist
     from .ocr import get_backend
+
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = log_dir / f"replay-{stamp}.log"
+    LOG.attach(log_path, echo_detail=args.debug)
+    LOG.say(f"Session log (full detail): {log_path}")
 
     settings = _settings_from_args(args)
     lexicon = _load_lexicon(args, settings)
@@ -463,42 +471,59 @@ def cmd_replay(args) -> int:
           f"OCR={backend.name}, scanning every "
           f"{settings.behaviour.replay_stride} frames\n")
 
-    engine, tracker = _drive(
-        source.frames(), lexicon, backend, settings,
-        DryRunTypist(settings.behaviour),
-        locate=not args.no_locate_panel,
-        stop_on_game_over=False,
-        debug=args.debug,
-    )
-    _summarise(engine, tracker)
+    try:
+        engine, tracker = _drive(
+            source.frames(), lexicon, backend, settings,
+            DryRunTypist(settings.behaviour),
+            locate=not args.no_locate_panel,
+            stop_on_game_over=False,
+            debug=args.debug,
+        )
+        _summarise(engine, tracker)
+    finally:
+        LOG.close()
     return 0
 
 
-class _Tee:
-    """Mirror stdout into a session log file.
+class _Log:
+    """Two-level session logging: everything to file, signal to console.
 
-    The terminal scrollback is the only diagnostic record of a live round;
-    persisting it means a round can be analysed after the fact without
-    anyone copy-pasting the console.
+    ``say`` is the console channel (state changes, combo telemetry,
+    scores); ``trace`` is the detail channel (every typed word, every OCR
+    read) and goes to the file only -- unless no file is attached (replay,
+    analyze) or --debug echoes it. The file gets BOTH levels, always, so
+    a round can be analysed after the fact without any console spam.
     """
 
-    def __init__(self, path: Path) -> None:
-        self._console = sys.stdout
+    def __init__(self) -> None:
+        self._file = None
+        self.echo_detail = False
+
+    def attach(self, path: Path, echo_detail: bool) -> None:
         self._file = path.open("w", encoding="utf-8")
-
-    def write(self, text: str) -> int:
-        self._console.write(text)
-        self._file.write(text)
-        self._file.flush()
-        return len(text)
-
-    def flush(self) -> None:
-        self._console.flush()
-        self._file.flush()
+        self.echo_detail = echo_detail
 
     def close(self) -> None:
-        sys.stdout = self._console
-        self._file.close()
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def _to_file(self, text: str) -> None:
+        if self._file is not None:
+            self._file.write(text + "\n")
+            self._file.flush()
+
+    def say(self, text: str = "") -> None:
+        print(text)
+        self._to_file(text)
+
+    def trace(self, text: str) -> None:
+        self._to_file(text)
+        if self._file is None or self.echo_detail:
+            print(text)
+
+
+LOG = _Log()
 
 
 def cmd_run(args) -> int:
@@ -512,9 +537,8 @@ def cmd_run(args) -> int:
     log_dir.mkdir(exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     log_path = log_dir / f"run-{stamp}.log"
-    tee = _Tee(log_path)
-    sys.stdout = tee
-    print(f"Session log: {log_path}")
+    LOG.attach(log_path, echo_detail=args.debug)
+    LOG.say(f"Session log (full detail): {log_path}")
 
     settings = _settings_from_args(args)
     lexicon = _load_lexicon(args, settings)
@@ -564,7 +588,7 @@ def cmd_run(args) -> int:
         print("\nStopped.")
         return 0
     finally:
-        tee.close()
+        LOG.close()
 
 
 def cmd_analyze(args) -> int:
