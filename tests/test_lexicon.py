@@ -142,7 +142,8 @@ def test_ocr_output_is_ascii_safe():
 @pytest.mark.parametrize("raw, expected", [
     ("TOWER", "TOWER"),
     ("ROSHAN", "ROSHAN"),
-    ("BEKREET", "BEK'REET"),     # apostrophe is skipped when typing anyway
+    ("BAKREET", "BAKREET"),   # game renders it with no apostrophe; typed
+                              # letters must match exactly, so spell as seen
 ])
 def test_custom_vocab_additions_apply_at_load_time(vocab_only, raw, expected):
     """Words observed as live targets but absent upstream come from

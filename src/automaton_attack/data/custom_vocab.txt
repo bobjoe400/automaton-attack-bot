@@ -16,4 +16,4 @@
 # Words seen as live target words but missing upstream:
 Tower
 Roshan
-Bek'reet
+Bakreet
