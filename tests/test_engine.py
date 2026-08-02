@@ -60,29 +60,33 @@ def test_corpus_matches_type_immediately_at_any_score():
     """Wrong keystrokes are free; a held word can escape and cost the
     multiplier. Every corpus match goes through on first sight."""
     confirmer = Confirmer()
-    assert confirmer.ready(detection("BANE", 0.95))
-    assert confirmer.ready(detection("METEOR HAMMER", 0.70))
-    assert confirmer.ready(detection("SAND KING", 0.63))
+    assert confirmer.ready(detection("BANE", 0.95), 0.0)
+    assert confirmer.ready(detection("METEOR HAMMER", 0.70), 0.0)
+    assert confirmer.ready(detection("SAND KING", 0.63), 0.0)
     assert confirmer.ready(detection("BANE OF YOUR EXISTENCE.", 0.80,
-                                     source="phrase"))
+                                     source="phrase"), 0.0)
 
 
-def test_fallback_reads_need_an_exact_repeat():
-    """Raw OCR with no corpus anchor: repetition is the only evidence the
-    read is right, and unrepeated flickers would burn keystrokes."""
+def test_fallback_reads_need_stability_over_time():
+    """Raw OCR with no corpus anchor must persist for real TIME, not just
+    consecutive scans: pipelined scans ~70ms apart can read the same
+    frame's mangle identically twice (CRYSTLY, ABADDOMNIKNIGHT and other
+    garbage got typed that way)."""
     confirmer = Confirmer()
     fallback = detection("A LONG UNKNOWN PHRASE", 0.0, source="fallback")
-    assert not confirmer.ready(fallback)
-    confirmer.update([fallback])
-    assert confirmer.ready(fallback)
+    assert not confirmer.ready(fallback, 0.0)
+    confirmer.update([fallback], 0.0)
+    assert not confirmer.ready(fallback, 0.1)   # same-frame repeat: no
+    confirmer.update([fallback], 0.1)
+    assert confirmer.ready(fallback, 0.5)       # persisted 0.5s: yes
 
 
 def test_confirmer_forgets_fallbacks_that_vanish():
     confirmer = Confirmer()
     fallback = detection("A LONG UNKNOWN PHRASE", 0.0, source="fallback")
-    confirmer.update([fallback])
-    confirmer.update([])
-    assert not confirmer.ready(fallback)
+    confirmer.update([fallback], 0.0)
+    confirmer.update([], 0.5)
+    assert not confirmer.ready(fallback, 1.0)
 
 
 # -- Engine --------------------------------------------------------------

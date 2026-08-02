@@ -300,6 +300,10 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
     last_multiplier = None
     last_multiplier_read = -1e9
     in_flight = deque()     # (timestamp, future) of pipelined detections
+    last_scan_submit = -1e9
+    # Below this spacing, two scans see essentially the same frame and
+    # 'stability' stops meaning anything (see Confirmer.MIN_STABLE_AGE).
+    MIN_SCAN_SPACING = 0.08
 
     def drain(block: bool = False) -> None:
         while in_flight and (block or in_flight[0][1].done()
@@ -347,9 +351,11 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
             seen_playing = True
             # Words first -- telemetry OCR must never delay a keystroke.
             if scan_pipeline is not None:
-                in_flight.append((timestamp, scan_pipeline.submit(
-                    engine.detector.detect, frame,
-                    include_unmatched=True, timestamp=timestamp)))
+                if timestamp - last_scan_submit >= MIN_SCAN_SPACING:
+                    last_scan_submit = timestamp
+                    in_flight.append((timestamp, scan_pipeline.submit(
+                        engine.detector.detect, frame,
+                        include_unmatched=True, timestamp=timestamp)))
                 drain()
             else:
                 for word in engine.process(timestamp, frame):
@@ -468,10 +474,47 @@ def cmd_replay(args) -> int:
     return 0
 
 
+class _Tee:
+    """Mirror stdout into a session log file.
+
+    The terminal scrollback is the only diagnostic record of a live round;
+    persisting it means a round can be analysed after the fact without
+    anyone copy-pasting the console.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._console = sys.stdout
+        self._file = path.open("w", encoding="utf-8")
+
+    def write(self, text: str) -> int:
+        self._console.write(text)
+        self._file.write(text)
+        self._file.flush()
+        return len(text)
+
+    def flush(self) -> None:
+        self._console.flush()
+        self._file.flush()
+
+    def close(self) -> None:
+        sys.stdout = self._console
+        self._file.close()
+
+
 def cmd_run(args) -> int:
+    import datetime
+
     from .capture import ScreenSource, find_game_monitor
     from .keyboard import make_typist
     from .ocr import get_backend
+
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = log_dir / f"run-{stamp}.log"
+    tee = _Tee(log_path)
+    sys.stdout = tee
+    print(f"Session log: {log_path}")
 
     settings = _settings_from_args(args)
     lexicon = _load_lexicon(args, settings)
@@ -515,11 +558,13 @@ def cmd_run(args) -> int:
             debug=args.debug,
             threaded=True,
         )
+        _summarise(engine, tracker)
+        return 0
     except KeyboardInterrupt:
         print("\nStopped.")
         return 0
-    _summarise(engine, tracker)
-    return 0
+    finally:
+        tee.close()
 
 
 def cmd_analyze(args) -> int:

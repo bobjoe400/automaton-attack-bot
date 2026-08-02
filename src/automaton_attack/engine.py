@@ -93,27 +93,38 @@ class Deduper:
 
 
 class Confirmer:
-    """Holds fallback reads back until a scan repeats them exactly.
+    """Holds fallback reads back until they stay stable over real TIME.
 
     Corpus matches pass straight through: typing a wrong guess costs only
     keystrokes, while holding a right one can cost the word.
+
+    Stability is measured in seconds, not scans: with pipelined scanning,
+    consecutive scans can be ~70ms apart and see essentially the same
+    frame, so an OCR mangle 'repeats identically' without meaning
+    anything. (A pipelining regression typed CRYSTLY, ABADDOMNIKNIGHT and
+    friends this way.) A read must persist MIN_STABLE_AGE across whatever
+    number of scans that spans.
     """
 
+    MIN_STABLE_AGE = 0.35   # seconds a fallback read must persist
+
     def __init__(self) -> None:
-        self.pending: set[str] = set()
+        self._first_seen: dict[str, float] = {}
 
     @staticmethod
     def _is_fallback(detection: Detection) -> bool:
         return bool(detection.match) and detection.match.source == "fallback"
 
-    def ready(self, detection: Detection) -> bool:
+    def ready(self, detection: Detection, now: float) -> bool:
         if not self._is_fallback(detection):
             return True
-        return detection.name in self.pending
+        first = self._first_seen.get(detection.name)
+        return first is not None and now - first >= self.MIN_STABLE_AGE
 
-    def update(self, detections: Iterable[Detection]) -> None:
-        self.pending = {
-            d.name for d in detections if self._is_fallback(d)
+    def update(self, detections: Iterable[Detection], now: float) -> None:
+        current = {d.name for d in detections if self._is_fallback(d)}
+        self._first_seen = {
+            name: self._first_seen.get(name, now) for name in current
         }
 
 
@@ -128,7 +139,7 @@ class Engine:
         self.confirmer = Confirmer()
         self.stats = Stats()
         self.last_detections: list[Detection] = []
-        self._previous_raw_keys: set[str] = set()
+        self._raw_first_seen: dict[str, float] = {}
         # How a decided word becomes keystrokes. The default types inline;
         # live mode replaces this with TypingWorker.submit so the scan loop
         # never blocks on the keyboard.
@@ -191,7 +202,7 @@ class Engine:
             if self.deduper.seen(detection.name, detection.pos):
                 self.stats.suppressed_duplicate += 1
                 continue
-            if not self.confirmer.ready(detection):
+            if not self.confirmer.ready(detection, timestamp):
                 self.stats.awaiting_confirmation += 1
                 continue
             self.deduper.mark(detection.name, detection.pos)
@@ -200,9 +211,9 @@ class Engine:
             self.stats.record(word)
             typed.append(word)
         typed.extend(self._insure_weak_matches(timestamp, detections))
-        # Update after the loop: a word must survive a full scan-to-scan gap,
+        # Update after the loop: a word must survive real time on screen,
         # not be confirmed by its own detection.
-        self.confirmer.update(detections)
+        self.confirmer.update(detections, timestamp)
         return typed
 
     def _insure_weak_matches(self, timestamp: float,
@@ -230,8 +241,11 @@ class Engine:
                 continue    # pure fallbacks have their own gate (Confirmer)
             if self.settings.safe_mode:
                 continue
-            if key not in self._previous_raw_keys:
-                continue    # not stable yet; misreads vary frame to frame
+            first = self._raw_first_seen.get(key)
+            if first is None or timestamp - first < Confirmer.MIN_STABLE_AGE:
+                # Stability is time, not scans: pipelined scans ~70ms apart
+                # can read the same frame's mangle identically twice.
+                continue
             verbatim = Match(key, 0.0, "fallback")
             if verbatim.keystrokes == match.keystrokes:
                 continue
@@ -245,7 +259,9 @@ class Engine:
             self.dispatch(word)
             self.stats.record(word)
             insured.append(word)
-        self._previous_raw_keys = current
+        self._raw_first_seen = {
+            key: self._raw_first_seen.get(key, timestamp) for key in current
+        }
         return insured
 
     def run(self, frames: Iterable[tuple[float, np.ndarray]]
