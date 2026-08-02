@@ -71,8 +71,11 @@ class Blobs:
     """
 
     dilate_kernel: tuple[int, int] = (5, 25)
-    min_area: int = 800
-    min_width: int = 50
+    # Floors sized so the narrowest real word fits: "IO" renders ~45 px
+    # wide after dilation (4-letter words measure 80-88). Junk rejection
+    # is min_fill's job, not the size floors'.
+    min_area: int = 500
+    min_width: int = 35
     min_height: int = 12
     max_height: int = 45
     # Fraction of lit pixels inside a blob's box (pre-dilation). Text sits
@@ -97,7 +100,7 @@ class Matching:
     """
 
     vocab_cutoff: float = 0.62
-    min_ocr_length: int = 3
+    min_ocr_length: int = 2      # "IO" is a real read; 1-letter reads are noise
     # When a longer vocab entry's key merely EXTENDS the best match's key
     # (WEAVE -> WEAVER) and scores within this margin, type the longer one:
     # its keystrokes complete the shorter word on the way through, so it

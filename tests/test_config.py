@@ -18,8 +18,8 @@ def test_geometry_scales_with_resolution():
     scaled = Settings().for_resolution(3840, 2160)
     assert scaled.geometry.panel == (962, 114, 2888, 2044)
     # blob filters must scale too, or nothing passes at 4K
-    assert scaled.blobs.min_width == 100
-    assert scaled.blobs.min_area == 3200
+    assert scaled.blobs.min_width == Settings().blobs.min_width * 2
+    assert scaled.blobs.min_area == Settings().blobs.min_area * 4
 
 
 def test_hud_boxes_scale_with_resolution():

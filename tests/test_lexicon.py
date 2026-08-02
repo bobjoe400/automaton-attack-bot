@@ -152,3 +152,18 @@ def test_custom_vocab_additions_apply_at_load_time(vocab_only, raw, expected):
     assert match is not None
     assert match.name == expected
     assert match.score == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("IO", "IO"),           # the two-letter hero; three layers used to eat it
+    ("BANANA", "BANANA"),   # Dark Carnival flavour word, not a Dota constant
+])
+def test_short_and_event_words_match(vocab_only, raw, expected):
+    match = vocab_only.match(raw)
+    assert match is not None
+    assert match.name == expected
+    assert match.score == pytest.approx(1.0)
+
+
+def test_single_letter_reads_are_still_noise(vocab_only):
+    assert vocab_only.match("I") is None

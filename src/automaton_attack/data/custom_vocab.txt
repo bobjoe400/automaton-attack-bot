@@ -17,3 +17,8 @@
 Tower
 Roshan
 Bakreet
+Banana
+
+# Io is real and two letters; the corpus builder's minimum-length filter
+# (which keeps upstream junk rows out) would drop it, so it lives here.
+Io
