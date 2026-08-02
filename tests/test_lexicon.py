@@ -196,3 +196,21 @@ def test_embedded_mining_skips_keys_inside_the_primary_match(vocab_only):
 
 def test_short_reads_are_not_mined(vocab_only):
     assert vocab_only.embedded_words("LUNA") == []
+
+
+def test_unique_containment_matches_fly_in_fragments(vocab_only):
+    """A word sliding in reads as a fragment of itself; 'DISK' sat
+    unmatched for 1.5s because the length prefilter can't bridge 4->8
+    chars. A fragment inside exactly ONE vocab key IS that word."""
+    match = vocab_only.match("DISK")
+    assert match is not None
+    assert match.name == "AEON DISK"
+    assert match.score == pytest.approx(0.80)
+
+
+def test_ambiguous_fragments_keep_waiting(vocab_only):
+    """'MASK' sits inside several keys (Morbid Mask, Voodoo Mask, Mask of
+    Madness) -- typing any one is a coin flip, so wait for more letters."""
+    match = vocab_only.match("MASK")
+    assert match is None or match.name not in (
+        "MORBID MASK", "VOODOO MASK", "MASK OF MADNESS")
