@@ -40,6 +40,22 @@ uv run automaton --rounds 3    # play several games back to back
 Every run writes a full-detail log to `logs/run-<stamp>.log`; the console
 shows only state changes, combo telemetry and scores.
 
+## No Python? Download a release
+
+Each [release](https://github.com/bobjoe400/automaton-attack-bot/releases)
+ships `automaton-attack-bot-win64.zip` — unzip and run `automaton.exe` from
+a terminal; same commands as above. The exe is built exclusively by the
+[release workflow](.github/workflows/release.yml) on GitHub's runners,
+never on anyone's machine, and every build is provenance-attested. To prove
+your download is byte-for-byte what that workflow built from this code:
+
+```bash
+gh attestation verify automaton-attack-bot-win64.zip --repo bobjoe400/automaton-attack-bot
+```
+
+(Windows will still show an "unrecognized app" warning — the zip is
+attested, not Authenticode-signed.)
+
 ## Commands
 
 | Command | What it does |

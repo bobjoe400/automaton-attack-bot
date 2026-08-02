@@ -1,0 +1,56 @@
+# Tag-triggered release: build the Windows exe on a public runner, attest
+# its provenance, and attach it to a GitHub Release.
+#
+# Cutting a release is:   git tag v1.0.0 && git push origin v1.0.0
+#
+# The binary is built ONLY here -- never on a dev machine -- so anyone can
+# verify a download came from this repo's code with:
+#   gh attestation verify automaton-attack-bot-win64.zip --repo bobjoe400/automaton-attack-bot
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write        # create the release
+  id-token: write        # sign the attestation via Sigstore
+  attestations: write    # store the attestation
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build
+        run: |
+          uv sync --extra live
+          uv run pyinstaller automaton.spec --noconfirm
+
+      - name: Smoke test
+        run: |
+          dist/automaton/automaton.exe --version
+          dist/automaton/automaton.exe match "PUDGE"
+
+      - name: Package
+        run: |
+          Compress-Archive -Path dist/automaton -DestinationPath automaton-attack-bot-win64.zip
+          (Get-FileHash automaton-attack-bot-win64.zip -Algorithm SHA256).Hash.ToLower() + " *automaton-attack-bot-win64.zip" | Out-File -Encoding ascii SHA256SUMS
+
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: automaton-attack-bot-win64.zip
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${{ github.ref_name }}"
+          automaton-attack-bot-win64.zip SHA256SUMS
+          --title "${{ github.ref_name }}"
+          --generate-notes
