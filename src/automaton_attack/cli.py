@@ -230,7 +230,11 @@ def _drive(frames, lexicon, backend, settings, typist, *,
     detector = Detector(lexicon, backend, settings)
     engine = Engine(detector, typist, settings)
     tracker = SessionTracker(backend, settings)
-    located = False
+    # Geometry is "proven" once the tracker recognises any game state with
+    # it. Until then, keep re-locating: locking on the first plausible
+    # rectangle once blinded a whole session when a transitional frame
+    # produced a wrong-but-plausible panel.
+    proven = False
     rounds_done = 0
     last_click = -1e9
     first_timestamp = None
@@ -242,7 +246,7 @@ def _drive(frames, lexicon, backend, settings, typist, *,
     for timestamp, frame in frames:
         if first_timestamp is None:
             first_timestamp = timestamp
-        if locate and not located:
+        if locate and not proven:
             panel = locate_panel(frame)
             if panel:
                 drift = max(abs(a - b) for a, b in
@@ -254,10 +258,11 @@ def _drive(frames, lexicon, backend, settings, typist, *,
                     tracker = SessionTracker(backend, settings)
                     print(f"Located minigame panel at {panel} "
                           f"(configured geometry re-anchored).")
-                located = True
 
         previous = tracker.state
         state = tracker.classify(timestamp, frame)
+        if state is not GameState.UNKNOWN:
+            proven = True
         if state is not previous:
             print(f"[{timestamp:7.2f}s] --- {state.value} ---")
         if (not tracker.transitions and not hinted

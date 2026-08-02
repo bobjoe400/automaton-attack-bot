@@ -163,7 +163,10 @@ def locate_panel(frame_bgr: np.ndarray) -> tuple[int, int, int, int] | None:
                     panel_h = y1 - y0
                     if panel_h < 0.5 * height:
                         continue
-                    if not 0.85 <= panel_w / panel_h <= 1.15:
+                    # Every real observation is ~square: 0.998-1.005 across
+                    # 1080p and 1440p captures. A bad lock at 1.107 once
+                    # blinded a whole session, so the tolerance is tight.
+                    if not 0.93 <= panel_w / panel_h <= 1.07:
                         continue
                     sides = (
                         side_cover(edges_v, x0, y0, y1, vertical=True),
