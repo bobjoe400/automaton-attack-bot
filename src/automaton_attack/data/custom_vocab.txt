@@ -18,6 +18,11 @@ Tower
 Roshan
 Bakreet
 Banana
+Imperia
+
+# The game renders this hero's CURRENT name; dotaconstants carries the old
+# one. Both stay in vocab -- exact reads beat fuzzy steals either way.
+Outworld Destroyer
 
 # Io is real and two letters; the corpus builder's minimum-length filter
 # (which keeps upstream junk rows out) would drop it, so it lives here.

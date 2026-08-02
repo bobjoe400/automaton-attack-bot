@@ -84,6 +84,14 @@ def build_parser() -> argparse.ArgumentParser:
                      help="don't exit when the game-over screen appears")
     _add_common(run)
 
+    analyze = subs.add_parser(
+        "analyze",
+        help="replay a recording and report reads that look like misses")
+    analyze.add_argument("clip", help="path to a video file")
+    analyze.add_argument("--stride", type=int,
+                         help="scan every Nth frame (default: 15)")
+    _add_common(analyze)
+
     match = subs.add_parser("match", help="resolve text against the lexicon")
     match.add_argument("text", nargs="+", help="OCR read(s) to look up")
     match.add_argument("--no-phrases", action="store_true")
@@ -389,6 +397,46 @@ def cmd_run(args) -> int:
     return 0
 
 
+def cmd_analyze(args) -> int:
+    from .analyze import ReadLog
+    from .capture import VideoSource
+    from .detect import Detector
+    from .ocr import get_backend
+    from .session import GameState, SessionTracker, locate_panel
+
+    settings = _settings_from_args(args)
+    lexicon = _load_lexicon(args, settings)
+    backend = get_backend(args.ocr)
+
+    source = VideoSource(args.clip, settings.behaviour.replay_stride)
+    settings = settings.for_resolution(source.width, source.height)
+    log = ReadLog()
+    detector = None
+    tracker = None
+
+    for timestamp, frame in source.frames():
+        if detector is None:
+            panel = None if args.no_locate_panel else locate_panel(frame)
+            if panel:
+                drift = max(abs(a - b) for a, b in
+                            zip(panel, settings.geometry.panel))
+                if drift > 8:
+                    settings = settings.with_panel(panel)
+            elif not args.no_locate_panel:
+                continue    # wait for a frame the panel can be found on
+            detector = Detector(lexicon, backend, settings)
+            tracker = SessionTracker(backend, settings)
+        if tracker.classify(timestamp, frame) is not GameState.PLAYING:
+            continue
+        for detection in detector.detect(frame, include_unmatched=True,
+                                         timestamp=timestamp):
+            log.add(timestamp, detection)
+
+    print()
+    print(log.report())
+    return 0
+
+
 def cmd_match(args) -> int:
     settings = _settings_from_args(args)
     lexicon = _load_lexicon(args, settings)
@@ -495,6 +543,7 @@ def cmd_calibrate(args) -> int:
 
 
 COMMANDS = {
+    "analyze": cmd_analyze,
     "doctor": cmd_doctor,
     "update-data": cmd_update_data,
     "replay": cmd_replay,
