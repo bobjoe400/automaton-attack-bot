@@ -56,32 +56,33 @@ def test_deduper_forgets_after_ttl():
 
 
 # -- Confirmer -----------------------------------------------------------
-def test_high_confidence_types_immediately():
-    confirmer = Confirmer(high_confidence=0.85)
+def test_corpus_matches_type_immediately_at_any_score():
+    """Wrong keystrokes are free; a held word can escape and cost the
+    multiplier. Every corpus match goes through on first sight."""
+    confirmer = Confirmer()
     assert confirmer.ready(detection("BANE", 0.95))
+    assert confirmer.ready(detection("METEOR HAMMER", 0.70))
+    assert confirmer.ready(detection("SAND KING", 0.63))
+    assert confirmer.ready(detection("BANE OF YOUR EXISTENCE.", 0.80,
+                                     source="phrase"))
 
 
-def test_low_confidence_needs_a_second_sighting():
-    confirmer = Confirmer(high_confidence=0.85)
-    low = detection("METEOR HAMMER", 0.70)
-    assert not confirmer.ready(low)
-    confirmer.update([low])
-    assert confirmer.ready(low)
-
-
-def test_fallback_reads_always_need_confirmation():
-    """Fallback matches score 0.0 precisely so they cannot skip this."""
-    confirmer = Confirmer(high_confidence=0.85)
+def test_fallback_reads_need_an_exact_repeat():
+    """Raw OCR with no corpus anchor: repetition is the only evidence the
+    read is right, and unrepeated flickers would burn keystrokes."""
+    confirmer = Confirmer()
     fallback = detection("A LONG UNKNOWN PHRASE", 0.0, source="fallback")
     assert not confirmer.ready(fallback)
+    confirmer.update([fallback])
+    assert confirmer.ready(fallback)
 
 
-def test_confirmer_forgets_words_that_vanish():
-    confirmer = Confirmer(high_confidence=0.85)
-    low = detection("METEOR HAMMER", 0.70)
-    confirmer.update([low])
+def test_confirmer_forgets_fallbacks_that_vanish():
+    confirmer = Confirmer()
+    fallback = detection("A LONG UNKNOWN PHRASE", 0.0, source="fallback")
+    confirmer.update([fallback])
     confirmer.update([])
-    assert not confirmer.ready(low)
+    assert not confirmer.ready(fallback)
 
 
 # -- Engine --------------------------------------------------------------
@@ -120,20 +121,36 @@ def test_engine_types_high_confidence_word_once():
     assert typist.typed == ["bane"]
 
 
-def test_engine_holds_then_types_a_repeated_low_confidence_read():
-    low = detection("METEOR HAMMER", 0.70)
-    typed, typist, engine = run_engine([[low], [low]])
+def test_engine_types_low_confidence_corpus_match_on_first_sight():
+    typed, typist, engine = run_engine([[detection("METEOR HAMMER", 0.70)]])
     assert [w.name for w in typed] == ["METEOR HAMMER"]
     assert typist.typed == ["meteorhammer"]
+    assert engine.stats.awaiting_confirmation == 0
+
+
+def test_engine_holds_then_types_a_repeated_fallback():
+    fallback = detection("SOMELONGPHRASE", 0.0, source="fallback")
+    typed, typist, engine = run_engine([[fallback], [fallback]])
+    assert [w.name for w in typed] == ["SOMELONGPHRASE"]
+    assert typist.typed == ["somelongphrase"]
     assert engine.stats.awaiting_confirmation == 1
 
 
-def test_engine_never_types_a_one_off_low_confidence_read():
-    """A word glimpsed in a single scan is exactly what the guard is for."""
-    typed, typist, _ = run_engine([[detection("METEOR HAMMER", 0.70)],
-                                   [detection("BANE", 1.0)]])
+def test_engine_never_types_a_one_off_fallback():
+    """An unanchored read glimpsed once is exactly what the guard is for."""
+    typed, typist, _ = run_engine(
+        [[detection("SOMELONGPHRASE", 0.0, source="fallback")],
+         [detection("BANE", 1.0)]])
     assert [w.name for w in typed] == ["BANE"]
-    assert "meteorhammer" not in typist.typed
+    assert "somelongphrase" not in typist.typed
+
+
+def test_a_corrected_read_types_as_a_new_word():
+    """First scan guesses WEAVE, second reads WEAVER: both type. The first
+    attempt is stray keys; the second completes the word."""
+    typed, typist, _ = run_engine([[detection("WEAVE", 0.91)],
+                                   [detection("WEAVER", 1.0)]])
+    assert typist.typed == ["weave", "weaver"]
 
 
 def test_engine_strips_spaces_and_punctuation_before_typing():
@@ -156,9 +173,3 @@ def test_engine_counts_what_it_did():
 def test_dry_run_typist_sends_nothing_live():
     typist = DryRunTypist()
     assert typist.live is False
-
-
-@pytest.mark.parametrize("score", [0.0, 0.5, 0.84])
-def test_everything_below_the_bar_is_held(score):
-    confirmer = Confirmer(high_confidence=0.85)
-    assert not confirmer.ready(detection("SOMETHING", score))

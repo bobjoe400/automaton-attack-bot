@@ -81,18 +81,26 @@ class Blobs:
 class Matching:
     """Fuzzy-match acceptance thresholds.
 
-    ``high_confidence`` types immediately; anything below it must produce the
-    same match on two consecutive scans. OCR errors vary frame to frame
-    (METEORHAKIMER vs METEORHARIMER), so exact repetition implies a correct
-    read. Tesseract's own confidence is NOT usable here -- it reported 0 on a
+    The multiplier resets when a word ESCAPES untyped, not when wrong
+    letters are sent -- stray keystrokes are free. So corpus matches are
+    typed on first sight at any accepted score: a wrong guess costs only
+    keyboard time, hesitating can cost the word. Only fallback reads (raw
+    OCR with no corpus anchor) wait for an exact repeat across two scans;
+    OCR errors vary frame to frame (METEORHAKIMER vs METEORHARIMER), so
+    repetition is the one signal that a fallback read is worth the keys.
+    Tesseract's own confidence is NOT usable here -- it reported 0 on a
     correctly-read long phrase -- so nothing gates on it.
     """
 
     vocab_cutoff: float = 0.62
-    high_confidence: float = 0.85
     min_ocr_length: int = 3
+    # When a longer vocab entry's key merely EXTENDS the best match's key
+    # (WEAVE -> WEAVER) and scores within this margin, type the longer one:
+    # its keystrokes complete the shorter word on the way through, so it
+    # covers both readings.
+    extension_epsilon: float = 0.10
     # The phrase corpus is ~40k lines, so a wrong steal types an entire wrong
-    # sentence. Hence a much higher bar than the core vocab.
+    # sentence -- pure wasted time. Hence a much higher bar than the vocab.
     phrase_cutoff: float = 0.80
     phrase_min_length: int = 10
     # Clean OCR that matched nothing is typed verbatim above this length.
@@ -120,9 +128,11 @@ class Settings:
     blobs: Blobs = field(default_factory=Blobs)
     matching: Matching = field(default_factory=Matching)
     behaviour: Behaviour = field(default_factory=Behaviour)
-    # Skip the verbatim-typing fallback tier. A wrong word resets the score
-    # multiplier to 1, so when the multiplier is worth protecting, accuracy
-    # beats coverage.
+    # Skip the verbatim-typing fallback tier. Unmatched reads are usually
+    # OCR-mangled, and typing them burns keyboard time that confident words
+    # need -- but skipping guarantees missing any word absent from the
+    # corpus, and a missed word is what resets the multiplier. Off by
+    # default for that reason.
     safe_mode: bool = False
 
     # -- resolution ------------------------------------------------------

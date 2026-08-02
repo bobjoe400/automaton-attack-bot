@@ -28,8 +28,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-phrases", action="store_true",
                         help="skip the ~39k voice-line corpus")
     parser.add_argument("--safe-mode", action="store_true",
-                        help="never type unmatched OCR verbatim; a wrong word "
-                             "resets the score multiplier")
+                        help="never type unmatched OCR verbatim; saves "
+                             "keyboard time for confident words, but any "
+                             "word missing from the corpus will escape")
     parser.add_argument("--no-auto-color", action="store_true",
                         help="use the configured HSV range as-is instead of "
                              "calibrating it against the HUD text each scan")

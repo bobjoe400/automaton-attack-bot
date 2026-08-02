@@ -91,12 +91,16 @@ backends, `--max-wpm` caps typing speed.
    segmentation).
 5. **Match** in three tiers: the core vocabulary (difflib, accept ≥0.62), then
    the voice-line corpus (rapidfuzz, accept ≥0.80 because a wrong steal types a
-   whole wrong sentence), then the read itself if it is long and clean.
-6. **Confirm**: matches ≥0.85 type immediately; everything else must be read
-   identically twice in a row. OCR errors vary frame to frame, so an exact
-   repeat is good evidence the read is right.
-7. **Type** letters only, lowercase — the game lets you skip spaces and
-   punctuation.
+   whole wrong sentence), then the read itself if it is long and clean. When a
+   longer word merely extends the best match (WEAVE → WEAVER) at a near-tied
+   score, the longer one wins: its keystrokes complete the shorter word on the
+   way through, so it covers both readings.
+6. **Type immediately, letters only, lowercase** — the game lets you skip
+   spaces and punctuation, and wrong keystrokes cost nothing (see below), so
+   every corpus match is typed on first sight. Only fallback reads — raw OCR
+   that matched nothing — wait for the identical text on two consecutive
+   scans, because OCR errors vary frame to frame and unrepeated flickers
+   would burn keyboard time on garbage.
 
 ## Configuration
 
@@ -116,8 +120,11 @@ framebuffer is not.
 
 - 60-second round, no fail state. Words fly in from the sides and vanish at the
   centre if unfinished.
-- **One missed word resets the score multiplier to 1**, so accuracy beats
-  speed. That is what `--safe-mode` is for.
+- **A word that escapes untyped resets the score multiplier to 1** — but wrong
+  keystrokes cost nothing; input isn't targeted at a word, stray letters just
+  don't advance anything. So the bot is greedy: attempt everything the moment
+  it's seen, and let a better read on the next scan correct it. Hesitation
+  loses multipliers, guessing doesn't.
 - Voice lines score far more than single words (100 vs 10 observed).
 - Set Dota to English or the words are localised and nothing matches.
 - Valve patched a pause-typing exploit in this minigame in July 2026, so the

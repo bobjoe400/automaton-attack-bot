@@ -59,6 +59,34 @@ def test_ocr_misreads_still_resolve(vocab_only, raw, expected):
     assert match.score >= Matching().vocab_cutoff
 
 
+def test_ambiguous_read_prefers_the_extension(vocab_only):
+    """'WEAVEP' scores WEAVE 0.91 and WEAVER 0.83 -- too close to call.
+    Typing WEAVER completes WEAVE on the way through, so the extension is
+    the safe guess; typing WEAVE against WEAVER leaves it a letter short."""
+    match = vocab_only.match("WEAVEP")
+    assert match is not None
+    assert match.name == "WEAVER"
+
+
+def test_single_letter_extension_is_cheap_insurance(vocab_only):
+    """Even a clean WEAVE read types WEAVER: ratio('WEAVE','WEAVER')=0.91
+    is within epsilon, and the maths is asymmetric -- the extension costs
+    one stray keystroke if the word really was WEAVE, but typing WEAVE
+    against a WEAVER leaves it unfinished and resets the multiplier."""
+    match = vocab_only.match("WEAVE")
+    assert match is not None
+    assert match.name == "WEAVER"
+    assert match.score == pytest.approx(1.0)   # confidence is the best match's
+
+
+def test_distant_extensions_are_not_preferred(vocab_only):
+    """SANGE must not balloon into SANGE AND YASHA (0.55, far outside
+    epsilon) -- extensions only win a near-tie, not every prefix."""
+    match = vocab_only.match("SANGE")
+    assert match is not None
+    assert match.name == "SANGE"
+
+
 def test_voice_line_matches_via_phrase_corpus(lexicon):
     match = lexicon.match("BANEOFYOUREXISTENCE")
     assert match is not None

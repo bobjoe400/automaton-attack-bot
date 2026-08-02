@@ -1,12 +1,21 @@
 """The scan/decide/type loop.
 
-Between detecting a word and typing it sit two guards:
+The multiplier resets when a word escapes untyped -- wrong keystrokes are
+free. So the engine is greedy: every corpus match is typed the moment it is
+seen. If the next scan reads the same word better, the corrected guess is a
+different name and types too; the earlier attempt was just stray keys.
 
-* :class:`Confirmer` -- anything not matched with high confidence must be read
-  identically on two consecutive scans. OCR errors vary frame to frame
-  (METEORHAKIMER one scan, METEORHARIMER the next), so an exact repeat is good
-  evidence the read is right. Tesseract's own confidence score is not usable
-  for this -- it returned 0 on a correctly-read long phrase.
+Two guards remain, both about not WASTING keyboard time rather than about
+being right:
+
+* :class:`Confirmer` -- only fallback reads (raw OCR that matched nothing)
+  are held until the identical text repeats on two consecutive scans. A
+  fallback has no corpus anchor, and OCR errors vary frame to frame
+  (METEORHAKIMER one scan, METEORHARIMER the next), so without the repeat
+  gate every flicker would burn keystrokes on a fresh garbage variant.
+  Exact repetition is also the one signal the read is actually right.
+  Tesseract's own confidence score is not usable for this -- it returned 0
+  on a correctly-read long phrase.
 * :class:`Deduper` -- a word already typed near the same spot is not retyped
   for a few seconds. In live play a completed word disappears, so seeing it
   again later means keystrokes were dropped or it genuinely respawned; both
@@ -83,21 +92,27 @@ class Deduper:
 
 
 class Confirmer:
-    """Holds low-confidence matches back until a scan repeats them."""
+    """Holds fallback reads back until a scan repeats them exactly.
 
-    def __init__(self, high_confidence: float = 0.85) -> None:
-        self.high_confidence = high_confidence
+    Corpus matches pass straight through: typing a wrong guess costs only
+    keystrokes, while holding a right one can cost the word.
+    """
+
+    def __init__(self) -> None:
         self.pending: set[str] = set()
 
+    @staticmethod
+    def _is_fallback(detection: Detection) -> bool:
+        return bool(detection.match) and detection.match.source == "fallback"
+
     def ready(self, detection: Detection) -> bool:
-        if detection.score >= self.high_confidence:
+        if not self._is_fallback(detection):
             return True
         return detection.name in self.pending
 
     def update(self, detections: Iterable[Detection]) -> None:
         self.pending = {
-            d.name for d in detections
-            if d.name and d.score < self.high_confidence
+            d.name for d in detections if self._is_fallback(d)
         }
 
 
@@ -109,7 +124,7 @@ class Engine:
         self.typist = typist or DryRunTypist(self.settings.behaviour)
         behaviour = self.settings.behaviour
         self.deduper = Deduper(behaviour.dedup_radius, behaviour.dedup_ttl)
-        self.confirmer = Confirmer(self.settings.matching.high_confidence)
+        self.confirmer = Confirmer()
         self.stats = Stats()
 
     def process(self, timestamp: float,

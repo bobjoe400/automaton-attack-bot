@@ -122,7 +122,36 @@ class Lexicon:
             score = sm.ratio()
             if score > best_score:
                 best, best_score = name, score
+        if best is not None:
+            best = self._prefer_extension(key, best, best_score)
         return best, best_score
+
+    def _prefer_extension(self, read_key: str, best: str,
+                          best_score: float) -> str:
+        """Swap a near-tied match for the longest entry whose key extends it.
+
+        Typing WEAVER when the word is WEAVE still completes WEAVE at the
+        fifth letter -- the trailing key is a harmless stray -- while typing
+        WEAVE when the word is WEAVER leaves it one letter short, and an
+        unfinished word is a lost multiplier. So when the OCR read is
+        ambiguous between a word and its extension (scores within
+        extension_epsilon), the extension is the safe choice: its keystrokes
+        cover both. The reported score stays the best match's, since that is
+        the evidence something matched at all.
+        """
+        best_key = to_key(best)
+        chosen, chosen_len = best, len(best_key)
+        floor = best_score - self.matching.extension_epsilon
+        sm = SequenceMatcher(None, read_key)
+        for name, entry_key in self.vocab:
+            if len(entry_key) <= chosen_len:
+                continue
+            if not entry_key.startswith(best_key):
+                continue
+            sm.set_seq2(entry_key)
+            if sm.ratio() >= floor:
+                chosen, chosen_len = name, len(entry_key)
+        return chosen
 
     def match_phrase(self, raw: str) -> tuple[str | None, float]:
         """Best voice-line match. Deliberately strict -- see phrase_cutoff."""
@@ -145,8 +174,9 @@ class Lexicon:
         """Resolve an OCR read to something typeable, or None.
 
         Tiers: core vocab, then the phrase corpus, then -- if the read is long
-        and clean enough -- the read itself. A fallback match scores 0.0, which
-        forces the two-scan confirmation in the engine before anything is typed.
+        and clean enough -- the read itself. Corpus matches are typed on
+        sight; fallback matches (score 0.0, source "fallback") are held by
+        the engine until the identical read repeats on consecutive scans.
         """
         name, score = self.match_vocab(raw)
         if not name or score < self.matching.vocab_cutoff:
