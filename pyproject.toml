@@ -1,0 +1,48 @@
+[project]
+name = "automaton-attack-bot"
+version = "0.1.0"
+description = "Computer-vision bot for the Automaton Attack typing minigame in Dota 2's Dark Carnival"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python>=4.9",
+    "rapidfuzz>=3.6",
+    # OCR. Ships its own ONNX models, so `uv sync` is the whole install --
+    # no system packages, nothing for a new cloner to set up by hand.
+    "rapidocr-onnxruntime>=1.3",
+]
+
+[project.optional-dependencies]
+# Screen capture + keystroke delivery. Not needed for offline replay/tests.
+live = [
+    "mss>=9.0",
+    "pydirectinput>=1.0.4",
+]
+# Alternative OCR backend. Also needs the tesseract binary installed
+# separately; only worth it if you already have it.
+tesseract = [
+    "pytesseract>=0.3.10",
+]
+
+[project.scripts]
+automaton = "automaton_attack.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/automaton_attack"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "clips: regression tests that need recorded clips in clips/ and tesseract installed",
+]
