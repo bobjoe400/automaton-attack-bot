@@ -63,5 +63,5 @@ shows only state changes, combo telemetry and scores.
 - [clips/README.md](clips/README.md) — recordings the regression tests expect.
 
 If a word the game shows isn't in the corpus, add it to
-[custom_vocab.txt](src/automaton_attack/data/custom_vocab.txt) — one line,
+[custom_vocab.txt](src/automaton_attack_bot/data/custom_vocab.txt) — one line,
 applied on the next run.

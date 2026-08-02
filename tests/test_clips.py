@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from automaton_attack.capture import VideoSource
-from automaton_attack.config import Settings
-from automaton_attack.detect import Detector
-from automaton_attack.engine import Engine
-from automaton_attack.lexicon import Lexicon
-from automaton_attack.ocr import OcrUnavailable, get_backend
+from automaton_attack_bot.capture import VideoSource
+from automaton_attack_bot.config import Settings
+from automaton_attack_bot.detect import Detector
+from automaton_attack_bot.engine import Engine
+from automaton_attack_bot.lexicon import Lexicon
+from automaton_attack_bot.ocr import OcrUnavailable, get_backend
 
 pytestmark = pytest.mark.clips
 
