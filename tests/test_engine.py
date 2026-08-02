@@ -359,3 +359,47 @@ def test_side_by_side_words_do_not_bundle():
     right = detection("PUDGE", 1.0, pos=(700, 430))
     typed, typist, _ = run_engine([[left, right]])
     assert typist.typed == ["pudge", "bane"]
+
+
+# -- danger-zone retype ------------------------------------------------------
+def run_clocked(frames, settings=None, step=0.5):
+    """Like run_engine, but with a controllable dedup clock."""
+    settings = settings or Settings()
+    detector = FakeDetector(frames, settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    clock = FakeClock()
+    engine.deduper = Deduper(radius=settings.behaviour.dedup_radius,
+                             ttl=settings.behaviour.dedup_ttl, clock=clock)
+    blank = np.zeros((4, 4, 3), np.uint8)
+    for index in range(len(frames)):
+        engine.process(index * step, blank)
+        clock.advance(step)
+    return typist
+
+
+def test_a_deep_word_that_would_not_die_retypes_fast():
+    """WRAITH KING was typed at depth 0.55, its keys eaten by the bundle
+    above, and the 1.2s dedup window let it sink to 0.68 before the
+    retype landed. A typed word still visible in the danger band retries
+    on a much shorter clock."""
+    deep = detection("WRAITH KING", 1.0, pos=(430, 545))    # bottom ~0.585
+    typist = run_clocked([[deep], [deep]], step=0.5)
+    assert typist.typed == ["wraithking", "wraithking"]
+
+
+def test_a_shallow_word_keeps_the_calm_dedup_window():
+    shallow = detection("BANE", 1.0, pos=(100, 100))
+    typist = run_clocked([[shallow], [shallow]], step=0.5)
+    assert typist.typed == ["bane"]
+
+
+def test_replay_ttls_disable_the_danger_retype():
+    """On tape a typed word never disappears; replays floor dedup_ttl at
+    3.0 and must not rapid-fire retypes at deep words."""
+    data = Settings().to_dict()
+    data["behaviour"]["dedup_ttl"] = 3.0
+    settings = Settings.from_dict(data)
+    deep = detection("WRAITH KING", 1.0, pos=(430, 545))
+    typist = run_clocked([[deep], [deep]], settings=settings, step=0.5)
+    assert typist.typed == ["wraithking"]

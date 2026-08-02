@@ -77,11 +77,17 @@ class Deduper:
         self.clock = clock
         self._entries: list[tuple[str, tuple[int, int], float]] = []
 
-    def seen(self, name: str, pos: tuple[int, int]) -> bool:
+    def seen(self, name: str, pos: tuple[int, int],
+             ttl: float | None = None) -> bool:
+        """``ttl`` overrides the configured window for this check only --
+        the engine shortens it for words deep in the panel."""
         now = self.clock()
         self._entries = [e for e in self._entries if now - e[2] < self.ttl]
-        for entry_name, entry_pos, _ in self._entries:
+        window = self.ttl if ttl is None else ttl
+        for entry_name, entry_pos, marked in self._entries:
             if entry_name != name:
+                continue
+            if now - marked >= window:
                 continue
             if (abs(entry_pos[0] - pos[0]) < self.radius
                     and abs(entry_pos[1] - pos[1]) < self.radius):
@@ -173,6 +179,23 @@ class Engine:
     # with a phrase 16px above it: separate blobs, one bundle in-game.
     STACK_MIN_OVERLAP = 0.5
     STACK_MAX_GAP_LINES = 1.4
+    # A typed word still visible this deep is a word whose keystrokes were
+    # eaten (a bundle held the top slot) or dropped -- either way it is
+    # about to strike, and the normal dedup window is far too patient:
+    # WRAITH KING was typed at depth 0.55, blocked, and the 1.2s TTL only
+    # let the retype land at 0.68 -- one scan from the platform.
+    DANGER_BAND = 0.55
+    DANGER_RETYPE_TTL = 0.4
+
+    def _dedup_ttl(self, detection: Detection) -> float | None:
+        """Shorter dedup window for words deep in the panel (live only:
+        on tape typed words never vanish, so replays -- which floor the
+        TTL at 3.0 -- must not rapid-fire retypes)."""
+        if self.settings.behaviour.dedup_ttl > 2.0:
+            return None
+        panel_h = self.settings.geometry.panel_size[1]
+        bottom = (detection.box[1] + detection.box[3]) / panel_h
+        return self.DANGER_RETYPE_TTL if bottom >= self.DANGER_BAND else None
 
     def _group_stacks(self, detections: list[Detection]) -> list[Detection]:
         """Tag vertically-adjacent, horizontally-overlapping labels as one
@@ -286,7 +309,8 @@ class Engine:
         for detection in detections:
             if not detection.match:
                 continue
-            if self.deduper.seen(detection.name, detection.pos):
+            if self.deduper.seen(detection.name, detection.pos,
+                                 ttl=self._dedup_ttl(detection)):
                 self.stats.suppressed_duplicate += 1
                 continue
             if not self.confirmer.ready(detection, timestamp):
@@ -329,7 +353,8 @@ class Engine:
             exclude = to_key(match.name) if match else None
             for name in lexicon.embedded_words(detection.raw,
                                                exclude_key=exclude):
-                if self.deduper.seen(name, detection.pos):
+                if self.deduper.seen(name, detection.pos,
+                                     ttl=self._dedup_ttl(detection)):
                     continue
                 self.deduper.mark(name, detection.pos)
                 embedded = Match(name, 1.0, "vocab")
