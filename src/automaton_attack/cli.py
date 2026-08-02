@@ -30,6 +30,9 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--safe-mode", action="store_true",
                         help="never type unmatched OCR verbatim; a wrong word "
                              "resets the score multiplier")
+    parser.add_argument("--no-auto-color", action="store_true",
+                        help="use the configured HSV range as-is instead of "
+                             "calibrating it against the HUD text each scan")
     parser.add_argument("--debug", action="store_true",
                         help="print every blob, matched or not")
 
@@ -97,6 +100,10 @@ def _settings_from_args(args) -> Settings:
         print(f"Using config {path}")
     if getattr(args, "safe_mode", False):
         settings = Settings.from_dict({**settings.to_dict(), "safe_mode": True})
+    if getattr(args, "no_auto_color", False):
+        data = settings.to_dict()
+        data["color"]["auto"] = False
+        settings = Settings.from_dict(data)
     if getattr(args, "stride", None):
         data = settings.to_dict()
         data["behaviour"]["replay_stride"] = args.stride
@@ -311,6 +318,22 @@ def cmd_calibrate(args) -> int:
     mask = detector.word_mask(frame)
     blobs = detector.blobs(mask)
     print(f"\nFrame {width}x{height}; panel {settings.geometry.panel}")
+    configured = (settings.color.hsv_lo, settings.color.hsv_hi)
+    active = detector.active_range
+    if detector.last_anchor:
+        anchor = detector.last_anchor
+        print(f"HUD colour sample: hue {anchor.hue_median:.0f}, "
+              f"sat {anchor.sat_median:.0f}, "
+              f"val {anchor.val_p5:.0f}-{anchor.val_p95:.0f}")
+        if active != configured:
+            print(f"Calibrated HSV range {active[0]}-{active[1]} "
+                  f"(configured: {configured[0]}-{configured[1]})")
+        else:
+            print("Display matches reference conditions; configured HSV "
+                  "range used unchanged.")
+    elif settings.color.auto:
+        print("No usable HUD colour sample in this frame (minigame not on "
+              "screen?); configured HSV range used.")
     print(f"Mask: {int(mask.sum() // 255)} lit pixels, {len(blobs)} blob(s) "
           f"passing filters.")
 

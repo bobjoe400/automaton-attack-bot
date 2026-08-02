@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from . import autocolor
 from .config import Settings
 from .lexicon import Lexicon, Match
 from .ocr import OcrBackend, prepare
@@ -53,6 +54,15 @@ class Detector:
         self.backend = backend
         self.settings = settings or Settings()
         self._kernel = np.ones(self.settings.blobs.dilate_kernel, np.uint8)
+        self._calibrated: tuple | None = None   # last good HUD-derived range
+        self.last_anchor: autocolor.ColorAnchor | None = None
+
+    @property
+    def active_range(self) -> tuple:
+        """The HSV range currently in use (calibrated if available)."""
+        if self._calibrated:
+            return self._calibrated
+        return self.settings.color.hsv_lo, self.settings.color.hsv_hi
 
     # -- stages ----------------------------------------------------------
     def crop_panel(self, frame_bgr: np.ndarray) -> np.ndarray:
@@ -63,8 +73,19 @@ class Detector:
         """Binary mask of target-word pixels, HUD regions blanked."""
         crop = self.crop_panel(frame_bgr)
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.settings.color.hsv_lo,
-                           self.settings.color.hsv_hi)
+        color = self.settings.color
+        if color.auto:
+            # The HUD boxes share the words' colour; sample them to follow
+            # whatever the display (HDR, night light, LUTs) is doing to it.
+            anchor = autocolor.measure(hsv, self.settings.geometry.hud_boxes)
+            if anchor:
+                self.last_anchor = anchor
+                calibrated = autocolor.shifted_range(
+                    anchor, color.hsv_lo, color.hsv_hi)
+                if calibrated:
+                    self._calibrated = calibrated
+        lo, hi = self.active_range
+        mask = cv2.inRange(hsv, lo, hi)
         # The score, timer and high-score boxes use the same yellow-green.
         for hx0, hy0, hx1, hy1 in self.settings.geometry.hud_boxes:
             mask[hy0:hy1, hx0:hx1] = 0

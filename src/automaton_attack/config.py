@@ -50,10 +50,16 @@ class Color:
     Measured off recorded footage at H 39-44, S 68-119, V 165-196; the range
     below is padded around that. The white input tracker (S~4, V~230) falls
     outside it and is ignored, which is what we want -- it is redundant.
+
+    With ``auto`` on (the default), the range is treated as relative to the
+    reference display conditions: each scan samples the HUD text -- rendered
+    in the same yellow-green -- and translates the range by however far the
+    display has shifted it (HDR, night light, driver LUTs). See autocolor.py.
     """
 
     hsv_lo: tuple[int, int, int] = (35, 50, 140)
     hsv_hi: tuple[int, int, int] = (50, 150, 230)
+    auto: bool = True
 
 
 @dataclass(frozen=True)
