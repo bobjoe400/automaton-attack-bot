@@ -25,7 +25,7 @@ being right:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Iterable, Iterator
 
 import numpy as np
@@ -162,6 +162,74 @@ class Engine:
     # ~22ms with jitter.
     APPROACH_SPEED = 0.12       # panel-fractions per second
     SECONDS_PER_KEY = 0.003     # SendInput overhead; no artificial delay
+    # The game only accepts the TOP word of a stacked pile: a lower word's
+    # keystrokes do nothing until everything above it has cleared, so its
+    # effective deadline is later by roughly one word-clear per rank.
+    STACK_RANK_DELAY = 0.15     # seconds per position down the stack
+
+    # Two labels are one bundle when they overlap horizontally by at least
+    # this fraction of the narrower one and the vertical gap between them
+    # is under this many label-heights. MAGIC WAND hung on screen for ~2s
+    # with a phrase 16px above it: separate blobs, one bundle in-game.
+    STACK_MIN_OVERLAP = 0.5
+    STACK_MAX_GAP_LINES = 1.4
+
+    def _group_stacks(self, detections: list[Detection]) -> list[Detection]:
+        """Tag vertically-adjacent, horizontally-overlapping labels as one
+        stack (top-to-bottom ranks, shared bundle box).
+
+        The line splitter tags stacks whose labels touch; this pass also
+        catches bundles whose labels stay separate blobs. Grouping is
+        transitive: three labels chained by pairwise adjacency are one
+        stack of three.
+        """
+        if len(detections) < 2:
+            return detections
+        parent = list(range(len(detections)))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        for i in range(len(detections)):
+            for j in range(len(detections)):
+                if i >= j:
+                    continue
+                bi, bj = detections[i].box, detections[j].box
+                upper, lower = (bi, bj) if bi[1] <= bj[1] else (bj, bi)
+                # Stacked lines sit below each other; boxes at the same
+                # height are side-by-side (or the same spot), not a stack.
+                if lower[1] < upper[1] + int(upper[3] * 0.6):
+                    continue
+                gap = lower[1] - (upper[1] + upper[3])
+                if gap > max(bi[3], bj[3]) * self.STACK_MAX_GAP_LINES:
+                    continue
+                overlap = (min(bi[0] + bi[2], bj[0] + bj[2])
+                           - max(bi[0], bj[0]))
+                if overlap >= self.STACK_MIN_OVERLAP * min(bi[2], bj[2]):
+                    parent[find(i)] = find(j)
+
+        groups: dict[int, list[int]] = {}
+        for i in range(len(detections)):
+            groups.setdefault(find(i), []).append(i)
+        out = list(detections)
+        for members in groups.values():
+            if len(members) < 2:
+                continue
+            members.sort(key=lambda i: detections[i].box[1])
+            x0 = min(detections[i].box[0] for i in members)
+            y0 = min(detections[i].box[1] for i in members)
+            x1 = max(detections[i].box[0] + detections[i].box[2]
+                     for i in members)
+            y1 = max(detections[i].box[1] + detections[i].box[3]
+                     for i in members)
+            bundle = (x0, y0, x1 - x0, y1 - y0)
+            for rank, i in enumerate(members):
+                out[i] = replace(detections[i], group_box=bundle,
+                                 stack_rank=rank)
+        return out
 
     def _urgency(self, detection: Detection) -> float:
         """Smaller = must start typing sooner.
@@ -170,14 +238,20 @@ class Engine:
         line needs ~0.7s of keyboard before it completes, so it must
         start earlier than a 4-key word at the same range. Two phrases
         died this exact way -- queued behind each other while both fell.
+
+        Stacked words use the whole pile's position (they fall together)
+        plus a per-rank delay, so a stack always types top-first: bundles
+        used to linger while we typed their ineligible lower words, then
+        vanish all at once when the retype cycle finally hit the top one.
         """
         panel_w, panel_h = self.settings.geometry.panel_size
-        bx, by, bw, bh = detection.box
+        bx, by, bw, bh = detection.group_box or detection.box
         dx = (bx + bw / 2) / panel_w - self.PLATFORM[0]
         dy = (by + bh / 2) / panel_h - self.PLATFORM[1]
         deadline = (dx * dx + dy * dy) ** 0.5 / self.APPROACH_SPEED
         keys = len(detection.match.keystrokes) if detection.match else 0
-        return deadline - keys * self.SECONDS_PER_KEY
+        return (deadline - keys * self.SECONDS_PER_KEY
+                + detection.stack_rank * self.STACK_RANK_DELAY)
 
     def process(self, timestamp: float,
                 frame: np.ndarray) -> list[TypedWord]:
@@ -203,6 +277,7 @@ class Engine:
             d for d in detections
             if (d.box[1] + d.box[3]) / panel_h < self.STRIKE_BAND
         ]
+        detections = self._group_stacks(detections)
         detections.sort(key=self._urgency)
         self.last_detections = detections
         self.stats.frames += 1

@@ -210,10 +210,11 @@ def test_words_nearest_the_platform_type_first():
     """Automatons converge on Hoodwink at panel-centre; the word about to
     reach her must not wait behind a fresh spawn. Spawns from below start
     close to the platform (but above the strike band -- anything below
-    that is already dead)."""
+    that is already dead). Horizontally separate: overlapping labels
+    would be a bundle and type top-first instead."""
     far_top = detection("BANE", 1.0, pos=(60, 40))
-    near_platform = detection("PUDGE", 1.0, pos=(430, 580))
-    below_spawn = detection("LINA", 1.0, pos=(450, 620))
+    near_platform = detection("PUDGE", 1.0, pos=(430, 500))
+    below_spawn = detection("LINA", 1.0, pos=(500, 650))
     typed, typist, _ = run_engine([[far_top, near_platform, below_spawn]])
     assert typist.typed == ["lina", "pudge", "bane"]
 
@@ -301,3 +302,60 @@ def test_strike_band_corpses_are_never_typed():
     living = detection("TANGO", 1.0, pos=(461, 600))
     typed, typist, _ = run_engine([[corpse, living]])
     assert typist.typed == ["tango"]
+
+
+# -- stacked bundles ---------------------------------------------------------
+def stacked(name, rank, group, pos):
+    """A word that is one line of a taller pile."""
+    return Detection(
+        box=(pos[0], pos[1], 120, 20),
+        raw=name,
+        match=Match(name, 1.0, "vocab"),
+        group_box=group,
+        stack_rank=rank,
+    )
+
+
+def test_stacks_type_top_first_regardless_of_range():
+    """The game only accepts the TOP word of a pile: bundles lingered
+    while we typed ineligible lower words, then vanished all at once when
+    the retype cycle finally hit the top one. Top-first, always -- even
+    though the bottom word is nearest the platform."""
+    group = (400, 500, 140, 80)
+    bottom = stacked("PUDGE", 2, group, (400, 560))
+    middle = stacked("BANE", 1, group, (400, 530))
+    top = stacked("MARCI", 0, group, (400, 500))
+    typed, typist, _ = run_engine([[bottom, middle, top]])
+    assert typist.typed == ["marci", "bane", "pudge"]
+
+
+def test_a_stack_uses_the_piles_deadline_not_each_words():
+    """Stack members fall together; the pile's top word must not wait
+    behind a lone word that is farther out."""
+    group = (430, 560, 140, 60)      # pile right by the platform
+    pile_top = stacked("LINA", 0, group, (430, 560))
+    lone_far = detection("BANE", 1.0, pos=(60, 40))
+    typed, typist, _ = run_engine([[lone_far, pile_top]])
+    assert typist.typed[0] == "lina"
+
+
+def test_separate_blobs_that_bundle_type_top_first():
+    """The MAGIC WAND case: a phrase 16px above a word, separate blobs,
+    one in-game bundle. The wand's first keystrokes were eaten while the
+    phrase above held the top slot -- so the phrase must type first even
+    though the word below is nearer the platform."""
+    phrase = Detection(box=(300, 423, 520, 20), raw="YOU'RE IN OVER YOUR HEAD.",
+                       match=Match("YOU'RE IN OVER YOUR HEAD.", 1.0, "phrase"))
+    wand = Detection(box=(430, 459, 200, 20), raw="MAGIC WAND",
+                     match=Match("MAGIC WAND", 1.0, "vocab"))
+    typed, typist, _ = run_engine([[wand, phrase]])
+    assert typist.typed == ["youreinoveryourhead", "magicwand"]
+
+
+def test_side_by_side_words_do_not_bundle():
+    """Horizontally separate words at similar heights are independent --
+    normal urgency order applies (nearest the platform first)."""
+    left = detection("BANE", 1.0, pos=(100, 420))
+    right = detection("PUDGE", 1.0, pos=(700, 430))
+    typed, typist, _ = run_engine([[left, right]])
+    assert typist.typed == ["pudge", "bane"]

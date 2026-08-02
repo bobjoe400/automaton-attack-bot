@@ -52,6 +52,12 @@ class Detection:
     box: tuple[int, int, int, int]   # x, y, w, h in panel-local coords
     raw: str                         # what OCR read
     match: Match | None              # what we resolved it to
+    # Stack context: when this word is one line of a taller pile-up, the
+    # whole pile's box and this word's top-to-bottom position in it. The
+    # game only accepts the TOP word of a stack, so typing order within a
+    # stack must be top-first regardless of who is nearest the platform.
+    group_box: tuple[int, int, int, int] | None = None
+    stack_rank: int = 0
 
     @property
     def pos(self) -> tuple[int, int]:
@@ -127,6 +133,13 @@ class Detector:
         return mask
 
     def blobs(self, mask: np.ndarray) -> list[tuple[int, int, int, int]]:
+        """Word-sized boxes only; see _blobs_with_stacks for the details."""
+        return [box for box, _, _ in self._blobs_with_stacks(mask)]
+
+    def _blobs_with_stacks(
+            self, mask: np.ndarray
+    ) -> list[tuple[tuple[int, int, int, int],
+                    tuple[int, int, int, int] | None, int]]:
         """Merge letters into word-sized boxes and filter out noise.
 
         A component TALLER than one text line is not noise -- it is words
@@ -135,6 +148,10 @@ class Detector:
         until the words drifted apart, which is how a five-word pile-up at
         0:04 on the clock cost a combo. Tall components are split into
         text lines instead.
+
+        Returns (box, stack_box, rank) per word: stack_box is the whole
+        pile's box (None for a lone word) and rank is the word's
+        top-to-bottom position in its pile.
         """
         merged = cv2.dilate(mask, self._kernel)
         count, _, stats, _ = cv2.connectedComponentsWithStats(merged)
@@ -146,9 +163,11 @@ class Detector:
                 continue
             if bh <= blobs.min_height:
                 continue
+            split = bh >= blobs.max_height
             candidates = ([(int(bx), int(by), int(bw), int(bh))]
-                          if bh < blobs.max_height
+                          if not split
                           else self._split_lines(mask, bx, by, bw, bh))
+            kept = []
             for cx, cy, cw, ch in candidates:
                 if cw < blobs.min_width:
                     continue
@@ -159,7 +178,13 @@ class Detector:
                 roi = mask[cy:cy + ch, cx:cx + cw]
                 if roi.size == 0 or roi.mean() / 255.0 < blobs.min_fill:
                     continue
-                boxes.append((cx, cy, cw, ch))
+                kept.append((cx, cy, cw, ch))
+            # Two or more lines out of one component is a stack: keep the
+            # pile's box and each line's top-to-bottom rank with it.
+            group = ((int(bx), int(by), int(bw), int(bh))
+                     if split and len(kept) >= 2 else None)
+            for rank, box in enumerate(sorted(kept, key=lambda b: b[1])):
+                boxes.append((box, group, rank if group else 0))
         return boxes
 
     def _split_lines(self, mask: np.ndarray, bx: int, by: int,
@@ -228,7 +253,8 @@ class Detector:
             band_end = int(mask.shape[0] * STATIC_BAND_FRACTION)
             static[band_end:, :] = 0    # the play field is never furniture
             mask[static > 0] = 0
-        boxes = self.blobs(mask)
+        blob_meta = self._blobs_with_stacks(mask)
+        boxes = [meta[0] for meta in blob_meta]
         if self._ocr_executor is not None and len(boxes) > 1:
             raws = list(self._ocr_executor.map(
                 lambda box: self.backend.read(prepare(mask, box)), boxes))
@@ -240,7 +266,10 @@ class Detector:
             match = self.lexicon.match(
                 raw, allow_fallback=not self.settings.safe_mode
             ) if raw else None
-            detections.append(Detection(box=box, raw=raw, match=match))
+            detections.append(Detection(
+                box=box, raw=raw, match=match,
+                group_box=blob_meta[index][1],
+                stack_rank=blob_meta[index][2]))
             if match is None or match.source == "fallback":
                 retry_indices.append(index)
         # Second chance for glare fragments: explosion glow and spawn
@@ -257,8 +286,9 @@ class Detector:
             old = detections[index]
             if match is not None and (old.match is None
                                       or match.score > old.match.score):
-                detections[index] = Detection(box=box, raw=second,
-                                              match=match)
+                detections[index] = Detection(
+                    box=box, raw=second, match=match,
+                    group_box=old.group_box, stack_rank=old.stack_rank)
         detections = self._stitch_wrapped_lines(detections)
         return [d for d in detections if d.match or include_unmatched]
 
