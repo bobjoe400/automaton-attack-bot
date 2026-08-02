@@ -114,11 +114,12 @@ def test_safe_mode_disables_the_fallback_tier(vocab_only):
 
 
 def test_removed_items_stay_out_of_the_vocabulary(vocab_only):
-    """Cornucopia and Eternal Shroud left the game; they must not steal
-    fuzzy matches from live items."""
+    """Cornucopia left the game; it must not steal fuzzy matches from live
+    items. (Eternal Shroud was wrongly listed here too, until it appeared
+    as a live target word -- retirement claims need observation.)"""
     keys = {key for _, key in vocab_only.vocab}
     assert "CORNUCOPIA" not in keys
-    assert "ETERNALSHROUD" not in keys
+    assert "ETERNALSHROUD" in keys
 
 
 def test_recent_patch_items_are_present(vocab_only):
@@ -138,11 +139,15 @@ def test_ocr_output_is_ascii_safe():
     assert clean_text("meteor hammer") == "METEOR HAMMER"
 
 
-def test_custom_vocab_additions_apply_at_load_time(vocab_only):
-    """'Tower' was observed as a live target word but is not a hero, item
-    or ability -- it comes from custom_vocab.txt, applied without a corpus
-    rebuild."""
-    match = vocab_only.match("TOWER")
+@pytest.mark.parametrize("raw, expected", [
+    ("TOWER", "TOWER"),
+    ("ROSHAN", "ROSHAN"),
+    ("BEKREET", "BEK'REET"),     # apostrophe is skipped when typing anyway
+])
+def test_custom_vocab_additions_apply_at_load_time(vocab_only, raw, expected):
+    """Words observed as live targets but absent upstream come from
+    custom_vocab.txt, applied at load time without a corpus rebuild."""
+    match = vocab_only.match(raw)
     assert match is not None
-    assert match.name == "TOWER"
+    assert match.name == expected
     assert match.score == pytest.approx(1.0)

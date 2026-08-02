@@ -73,10 +73,11 @@ REJECT_KEY_SUFFIXES = ("_ad",)
 NAME_SHAPE = re.compile(r"^[A-Za-z][A-Za-z0-9 '\-.!&]*$")
 
 # In the game's target words, but retired from the game itself. They linger
-# in dotaconstants and would steal fuzzy matches from live words.
+# in dotaconstants and would steal fuzzy matches from live words. Only list
+# a word here on OBSERVATION, not on patch notes: Eternal Shroud was listed
+# as retired by the prototype's notes, then showed up as a live target word.
 RETIRED = {
     "Cornucopia",
-    "Eternal Shroud",
 }
 
 # Voice lines: long enough to be worth a fuzzy match, short enough to be one

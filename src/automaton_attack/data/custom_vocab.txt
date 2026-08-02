@@ -9,8 +9,11 @@
 # Add words here as the bot logs unmatched reads.
 
 # Retired from the game but still present in dotaconstants:
+# (Eternal Shroud was listed here on the prototype's word, then observed as
+# a live target word 2026-08-01 -- it is NOT retired. Trust observation.)
 - Cornucopia
-- Eternal Shroud
 
-# Dota terms seen as target words in live play (not in dotaconstants):
+# Words seen as live target words but missing upstream:
 Tower
+Roshan
+Bek'reet
