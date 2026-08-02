@@ -62,6 +62,11 @@ def _read_entries(path: Path) -> list[str]:
 class Lexicon:
     """Fuzzy-matches OCR output against the vocab, then the phrase corpus."""
 
+    # Score assigned to a unique-containment match ('DISK' inside exactly
+    # one key, AEONDISK): confident enough to type immediately and to
+    # survive load triage, below strong_match so insurance still watches.
+    CONTAINMENT_SCORE = 0.80
+
     def __init__(
         self,
         vocab: Iterable[str],
@@ -143,8 +148,21 @@ class Lexicon:
                 score = sm.ratio()
                 if score > best_score:
                     best, best_score, best_key = name, score, key
-        if best is not None:
+        if best is not None and best_score >= self.matching.vocab_cutoff:
             best = self._prefer_extension(best_key, best, best_score)
+            return best, best_score
+        # Fly-in partials: a word sliding in reads as a fragment of itself
+        # ('DISK' for AEON DISK), and the length prefilter above can never
+        # bridge that gap -- one such word sat unmatched for 1.5s mid-round.
+        # If the fragment appears in exactly ONE vocabulary key, that is
+        # the word; in several, wait for more letters.
+        if len(raw_key) >= 4:
+            containing = [
+                (name, entry_key) for name, entry_key in self.vocab
+                if len(entry_key) > len(raw_key) and raw_key in entry_key
+            ]
+            if len(containing) == 1:
+                return containing[0][0], self.CONTAINMENT_SCORE
         return best, best_score
 
     def _prefer_extension(self, read_key: str, best: str,
@@ -190,6 +208,29 @@ class Lexicon:
         if hit is None:
             return None, 0.0
         return self.phrase_names[hit[2]], hit[1] / 100.0
+
+    def embedded_words(self, raw: str,
+                       exclude_key: str | None = None) -> list[str]:
+        """Vocab entries whose key appears verbatim inside a merged read.
+
+        Interleaved word clusters OCR as mush ('TEMPLAR ASSMANTA STYLE'),
+        but the mush often contains component words letter-perfect. An
+        exact >=4-char vocab key inside a long read is near-certain to be
+        a real word on screen; keys already inside ``exclude_key`` (the
+        primary match) complete automatically when it is typed.
+        """
+        key = to_key(raw)
+        if len(key) < 8:
+            return []
+        hits = []
+        for name, entry_key in self.vocab:
+            if not 4 <= len(entry_key) < len(key):
+                continue
+            if exclude_key and entry_key in exclude_key:
+                continue
+            if entry_key in key:
+                hits.append(name)
+        return hits
 
     def match(self, raw: str, allow_fallback: bool = True) -> Match | None:
         """Resolve an OCR read to something typeable, or None.

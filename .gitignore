@@ -14,3 +14,4 @@ clips/*.mkv
 # calibrate output and local settings
 calibration/
 automaton.json
+logs/

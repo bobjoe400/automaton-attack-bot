@@ -83,7 +83,12 @@ class RapidOcrBackend:
             raise OcrUnavailable(
                 "rapidocr-onnxruntime is not installed. Run: uv sync"
             ) from exc
-        self._engine = RapidOCR()
+        # One compute thread per engine: parallelism comes from the POOL.
+        # The default (-1) spawns a thread per core PER SESSION -- eight
+        # engines once amounted to ~128 compute threads on a 16-thread CPU
+        # that was also running the game, and the typing thread starved.
+        self._engine = RapidOCR(intra_op_num_threads=1,
+                                inter_op_num_threads=1)
 
     def read(self, image: np.ndarray) -> str:
         if image.size == 0:
@@ -186,7 +191,8 @@ class OcrPool:
 
 
 BACKENDS = ("rapidocr", "tesseract")
-POOL_SIZE = min(4, (os.cpu_count() or 2) - 1)
+# Sized for TWO pipelined scans of a busy screen (4-8 blobs each).
+POOL_SIZE = min(8, max(2, (os.cpu_count() or 4) - 2))
 
 
 def get_backend(name: str = "auto", pool: bool = True) -> OcrBackend:

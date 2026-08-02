@@ -60,29 +60,33 @@ def test_corpus_matches_type_immediately_at_any_score():
     """Wrong keystrokes are free; a held word can escape and cost the
     multiplier. Every corpus match goes through on first sight."""
     confirmer = Confirmer()
-    assert confirmer.ready(detection("BANE", 0.95))
-    assert confirmer.ready(detection("METEOR HAMMER", 0.70))
-    assert confirmer.ready(detection("SAND KING", 0.63))
+    assert confirmer.ready(detection("BANE", 0.95), 0.0)
+    assert confirmer.ready(detection("METEOR HAMMER", 0.70), 0.0)
+    assert confirmer.ready(detection("SAND KING", 0.63), 0.0)
     assert confirmer.ready(detection("BANE OF YOUR EXISTENCE.", 0.80,
-                                     source="phrase"))
+                                     source="phrase"), 0.0)
 
 
-def test_fallback_reads_need_an_exact_repeat():
-    """Raw OCR with no corpus anchor: repetition is the only evidence the
-    read is right, and unrepeated flickers would burn keystrokes."""
+def test_fallback_reads_need_stability_over_time():
+    """Raw OCR with no corpus anchor must persist for real TIME, not just
+    consecutive scans: pipelined scans ~70ms apart can read the same
+    frame's mangle identically twice (CRYSTLY, ABADDOMNIKNIGHT and other
+    garbage got typed that way)."""
     confirmer = Confirmer()
     fallback = detection("A LONG UNKNOWN PHRASE", 0.0, source="fallback")
-    assert not confirmer.ready(fallback)
-    confirmer.update([fallback])
-    assert confirmer.ready(fallback)
+    assert not confirmer.ready(fallback, 0.0)
+    confirmer.update([fallback], 0.0)
+    assert not confirmer.ready(fallback, 0.1)   # same-frame repeat: no
+    confirmer.update([fallback], 0.1)
+    assert confirmer.ready(fallback, 0.5)       # persisted 0.5s: yes
 
 
 def test_confirmer_forgets_fallbacks_that_vanish():
     confirmer = Confirmer()
     fallback = detection("A LONG UNKNOWN PHRASE", 0.0, source="fallback")
-    confirmer.update([fallback])
-    confirmer.update([])
-    assert not confirmer.ready(fallback)
+    confirmer.update([fallback], 0.0)
+    confirmer.update([], 0.5)
+    assert not confirmer.ready(fallback, 1.0)
 
 
 # -- Engine --------------------------------------------------------------
@@ -204,13 +208,14 @@ def test_pick_monitor_with_no_overlap_returns_none():
 
 def test_words_nearest_the_platform_type_first():
     """Automatons converge on Hoodwink at panel-centre; the word about to
-    reach her must not wait behind a fresh spawn. Spawns from the bottom
-    start close to the platform, so this covers them too."""
+    reach her must not wait behind a fresh spawn. Spawns from below start
+    close to the platform (but above the strike band -- anything below
+    that is already dead)."""
     far_top = detection("BANE", 1.0, pos=(60, 40))
     near_platform = detection("PUDGE", 1.0, pos=(430, 580))
-    bottom_spawn = detection("LINA", 1.0, pos=(450, 900))
-    typed, typist, _ = run_engine([[far_top, near_platform, bottom_spawn]])
-    assert typist.typed == ["pudge", "lina", "bane"]
+    below_spawn = detection("LINA", 1.0, pos=(450, 620))
+    typed, typist, _ = run_engine([[far_top, near_platform, below_spawn]])
+    assert typist.typed == ["lina", "pudge", "bane"]
 
 
 # -- verbatim insurance ------------------------------------------------------
@@ -255,3 +260,44 @@ def test_long_phrases_win_the_tie_at_equal_range():
     word = detection("AXE", 1.0, pos=(300, 300))
     typed, typist, _ = run_engine([[word, phrase]])
     assert typist.typed[0] == "toldyouastormwascoming"
+
+
+def test_process_detections_matches_process():
+    """The pipelined path (detect elsewhere, decide here) must behave
+    identically to the inline path."""
+    settings = Settings()
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(FakeDetector([], settings), typist, settings)
+    words = engine.process_detections(
+        1.0, [detection("BANE", 1.0), detection("PUDGE", 1.0,
+                                                pos=(430, 580))])
+    assert [w.name for w in words] == ["PUDGE", "BANE"]   # urgency order
+    assert typist.typed == ["pudge", "bane"]
+
+
+def test_embedded_words_type_from_weak_cluster_reads():
+    """VISAGE died with one letter typed inside an interleaved pile-up.
+    A weak merged read containing a vocab key letter-perfect types that
+    word immediately."""
+    from automaton_attack.lexicon import Lexicon
+
+    settings = Settings()
+    detector = FakeDetector([], settings)
+    detector.lexicon = Lexicon(["Templar Assassin", "Manta Style"])
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    weak = detection("TEMPLAR ASSASSIN", 0.69,
+                     raw="TEMPLAR ASSMANTA STYLE")
+    engine.process_detections(0.0, [weak])
+    assert "templarassassin" in typist.typed
+    assert "mantastyle" in typist.typed
+
+
+def test_strike_band_corpses_are_never_typed():
+    """A label below 70% panel height is a word that already struck --
+    the game's kill display. KAYA's corpse got typed at top queue
+    priority and starved living words right after a strike."""
+    corpse = detection("KAYA", 1.0, pos=(524, 819))
+    living = detection("TANGO", 1.0, pos=(461, 600))
+    typed, typist, _ = run_engine([[corpse, living]])
+    assert typist.typed == ["tango"]
