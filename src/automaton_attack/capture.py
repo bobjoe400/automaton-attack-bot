@@ -111,7 +111,14 @@ class VideoSource:
 class ScreenSource:
     """Frames grabbed from the live screen with mss."""
 
-    def __init__(self, monitor: int = 1, interval: float = 0.05) -> None:
+    # Consecutive identical grabs before the grabber is reinitialised.
+    # Nothing in this game holds a frame for 0.3s; identical content that
+    # long means the desktop-duplication buffer went stale (observed at a
+    # round restart: 5.4s of frozen frames while a word died on screen).
+    FROZEN_GRAB_LIMIT = 10
+
+    def __init__(self, monitor: int = 1, interval: float = 0.05,
+                 on_stall=None) -> None:
         try:
             import mss
         except ImportError as exc:  # pragma: no cover - env dependent
@@ -121,6 +128,7 @@ class ScreenSource:
         self._mss = mss
         self.monitor_index = monitor
         self.interval = interval
+        self.on_stall = on_stall
         with mss.mss() as sct:
             mon = sct.monitors[monitor]
             self.width, self.height = mon["width"], mon["height"]
@@ -139,16 +147,46 @@ class ScreenSource:
         start = time.monotonic()
 
         def producer() -> None:
-            with self._mss.mss() as sct:
-                monitor = sct.monitors[self.monitor_index]
+            try:
+                import ctypes
+
+                kernel32 = ctypes.windll.kernel32
+                THREAD_PRIORITY_ABOVE_NORMAL = 1
+                kernel32.SetThreadPriority(kernel32.GetCurrentThread(),
+                                           THREAD_PRIORITY_ABOVE_NORMAL)
+            except Exception:   # noqa: BLE001 - best effort, non-Windows
+                pass
+            sct = self._mss.mss()
+            monitor = sct.monitors[self.monitor_index]
+            last_signature = None
+            frozen = 0
+            try:
                 while not state["stop"]:
                     frame = np.asarray(sct.grab(monitor))[:, :, :3]
+                    # Cheap content signature: a strided sample sum.
+                    signature = int(frame[::97, ::97].sum())
+                    if signature == last_signature:
+                        frozen += 1
+                        if frozen >= self.FROZEN_GRAB_LIMIT:
+                            if self.on_stall is not None:
+                                self.on_stall(
+                                    "!!! capture stalled (frozen frames) "
+                                    "-- reinitialising the grabber")
+                            sct.close()
+                            sct = self._mss.mss()
+                            monitor = sct.monitors[self.monitor_index]
+                            frozen = 0
+                    else:
+                        frozen = 0
+                        last_signature = signature
                     with condition:
                         state["seq"] += 1
                         state["timestamp"] = time.monotonic() - start
                         state["frame"] = frame
                         condition.notify_all()
                     time.sleep(self.interval)
+            finally:
+                sct.close()
 
         thread = threading.Thread(target=producer, daemon=True,
                                   name="capture")

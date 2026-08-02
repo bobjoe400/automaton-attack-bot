@@ -557,7 +557,8 @@ def cmd_run(args) -> int:
             print("No Dota 2 window found; capturing the primary monitor "
                   "(--monitor N to override).")
         monitor = found or 1
-    source = ScreenSource(int(monitor), settings.behaviour.scan_interval)
+    source = ScreenSource(int(monitor), settings.behaviour.scan_interval,
+                          on_stall=LOG.say)
     settings = settings.for_resolution(source.width, source.height)
     live = not args.dry_run
     if live:
