@@ -245,12 +245,13 @@ def test_short_weak_reads_get_no_insurance():
     assert typist.typed == ["cloak"]
 
 
-def test_long_phrases_start_before_equally_close_short_words():
-    """Urgency is deadline MINUS service time: a 30-key voice line needs
-    ~0.7s of keyboard, so it outranks a 4-key word at similar range. Two
-    phrases died queued behind each other to teach us this."""
+def test_long_phrases_win_the_tie_at_equal_range():
+    """Urgency is deadline MINUS service time, so at equal range the
+    longer keystroke burden starts first. (At full typing speed the
+    service term is small, but the tie-break still matters: two phrases
+    once died queued behind each other.)"""
     phrase = detection("TOLD YOU A STORM WAS COMING!", 1.0, pos=(300, 300),
                        source="phrase")
-    word = detection("AXE", 1.0, pos=(310, 310))
+    word = detection("AXE", 1.0, pos=(300, 300))
     typed, typist, _ = run_engine([[word, phrase]])
     assert typist.typed[0] == "toldyouastormwascoming"

@@ -61,8 +61,8 @@ class DirectInputTypist:
     def _pace(self) -> float:
         """Seconds per character implied by the WPM cap (0 = uncapped).
 
-        Valve patched a pause-typing exploit in this minigame in July 2026, so
-        the leaderboard is watched. A cap keeps output within human range.
+        The default is uncapped, full machine speed. --max-wpm is the
+        opt-in throttle for anyone who wants human-plausible pacing.
         """
         wpm = self.behaviour.max_wpm
         if wpm <= 0:
@@ -72,8 +72,10 @@ class DirectInputTypist:
     def type(self, text: str) -> None:
         for char in text:
             self._pydirectinput.press(char)
-            delay = random.uniform(*self.behaviour.key_delay)
-            time.sleep(max(delay, self._min_seconds_per_char))
+            delay = max(random.uniform(*self.behaviour.key_delay),
+                        self._min_seconds_per_char)
+            if delay > 0:
+                time.sleep(delay)
         self.typed.append(text)
 
     def click(self, x: int, y: int) -> None:

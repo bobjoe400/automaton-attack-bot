@@ -270,6 +270,7 @@ def test_single_wild_misread_cannot_become_the_score():
     ("0:24", 24),
     ("1:00", 60),
     ("0.07", 7),           # OCR reads the colon as a dot sometimes
+    ("1:37", None),        # the round clock never exceeds 1:00 -- misread
     ("TIME", None),
     ("", None),
 ])

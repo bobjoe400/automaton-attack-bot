@@ -122,8 +122,10 @@ framebuffer is not.
   loses multipliers, guessing doesn't.
 - Voice lines score far more than single words (100 vs 10 observed).
 - Set Dota to English or the words are localised and nothing matches.
-- Valve patched a pause-typing exploit in this minigame in July 2026, so the
-  leaderboard is watched. `--max-wpm` keeps output in human range.
+- Typing runs at full machine speed by default. `--max-wpm` is the opt-in
+  throttle if you want human-plausible pacing (Valve has patched exploits in
+  this minigame before, so the leaderboard is at least occasionally watched —
+  your call).
 
 ## Development
 

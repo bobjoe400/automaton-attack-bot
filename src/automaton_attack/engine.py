@@ -143,7 +143,7 @@ class Engine:
     # about half the panel in a ~4s word lifetime, and a keystroke costs
     # ~22ms with jitter.
     APPROACH_SPEED = 0.12       # panel-fractions per second
-    SECONDS_PER_KEY = 0.022
+    SECONDS_PER_KEY = 0.003     # SendInput overhead; no artificial delay
 
     def _urgency(self, detection: Detection) -> float:
         """Smaller = must start typing sooner.

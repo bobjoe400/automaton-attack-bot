@@ -98,11 +98,16 @@ def parse_multiplier(text: str) -> float | None:
 
 
 def parse_timer(text: str) -> int | None:
-    """Seconds remaining from a "0:24"-style read."""
+    """Seconds remaining from a "0:24"-style read.
+
+    The round clock never exceeds 1:00; larger values ('1:37' was logged
+    once) are misreads, not times.
+    """
     match = re.search(r"(\d{1,2})[:.](\d{2})", text)
     if not match:
         return None
-    return int(match.group(1)) * 60 + int(match.group(2))
+    seconds = int(match.group(1)) * 60 + int(match.group(2))
+    return seconds if seconds <= 60 else None
 
 
 def parse_score(row: str) -> int | None:
