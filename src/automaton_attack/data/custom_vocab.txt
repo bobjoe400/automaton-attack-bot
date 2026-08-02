@@ -1,0 +1,31 @@
+# Hand-maintained vocabulary adjustments. The main corpus is generated from
+# odota/dotaconstants by `automaton update-data`; this file covers what
+# upstream cannot know about:
+#
+#   Word            adds a word seen in the minigame but missing upstream
+#   - Word          excludes an upstream word (retired items steal fuzzy
+#                   matches from live ones)
+#
+# Add words here as the bot logs unmatched reads.
+
+# Retired from the game but still present in dotaconstants:
+# (Eternal Shroud was listed here on the prototype's word, then observed as
+# a live target word 2026-08-01 -- it is NOT retired. Trust observation.)
+- Cornucopia
+
+# Words seen as live target words but missing upstream:
+Tower
+Roshan
+Bakreet
+Banana
+Imperia
+Gralla
+Boots
+
+# The game renders this hero's CURRENT name; dotaconstants carries the old
+# one. Both stay in vocab -- exact reads beat fuzzy steals either way.
+Outworld Destroyer
+
+# Io is real and two letters; the corpus builder's minimum-length filter
+# (which keeps upstream junk rows out) would drop it, so it lives here.
+Io

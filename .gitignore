@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Recorded gameplay used for regression tests (large; keep them local)
+clips/*.mp4
+clips/*.mkv
+
+# calibrate output and local settings
+calibration/
+automaton.json

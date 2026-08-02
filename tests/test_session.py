@@ -1,0 +1,239 @@
+"""Game-state tracking, panel location, and the full-game regression.
+
+The clip-marked tests use ``clips/fullgame.mp4``: start screen, one full
+round, game-over screen with a total score of 750.
+"""
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from automaton_attack.config import Settings
+from automaton_attack.session import (
+    GameState,
+    SessionTracker,
+    _fuzzy_contains,
+    locate_panel,
+)
+
+FULLGAME = Path("clips") / "fullgame.mp4"
+FULLGAME_SCORE = 750
+
+
+# -- unit ------------------------------------------------------------------
+@pytest.mark.parametrize("read, key", [
+    ("AUTOMATONATTACK", "AUTOMATONATTACK"),
+    ("AUTOMATONATACK", "AUTOMATONATTACK"),    # observed rapidocr read
+    ("CAMEOVER", "GAMEOVER"),                 # observed rapidocr read
+    ("GAMEOVER", "GAMEOVER"),
+])
+def test_observed_title_misreads_still_match(read, key):
+    assert _fuzzy_contains(read, key)
+
+
+@pytest.mark.parametrize("read, key", [
+    ("", "GAMEOVER"),
+    ("RAZO", "GAMEOVER"),           # stray gameplay word in the title strip
+    ("HIGHSCORES", "AUTOMATONATTACK"),
+])
+def test_unrelated_text_does_not_match(read, key):
+    assert not _fuzzy_contains(read, key)
+
+
+def test_button_positions_land_inside_the_panel():
+    settings = Settings()
+    tracker = SessionTracker(backend=None, settings=settings)
+    x0, y0, x1, y1 = settings.geometry.panel
+    for state in (GameState.START_SCREEN, GameState.GAME_OVER):
+        bx, by = tracker.button_position(state)
+        assert x0 < bx < x1
+        assert y0 < by < y1
+    # PLAY sits lower than PLAY AGAIN on their respective screens
+    assert (tracker.button_position(GameState.START_SCREEN)[1]
+            > tracker.button_position(GameState.GAME_OVER)[1])
+
+
+def test_with_panel_rescales_geometry_and_blobs():
+    settings = Settings()
+    # same panel, doubled in size
+    x0, y0, x1, y1 = settings.geometry.panel
+    scaled = settings.with_panel((100, 50, 100 + 2 * (x1 - x0),
+                                  50 + 2 * (y1 - y0)))
+    assert scaled.geometry.panel[0] == 100
+    assert scaled.blobs.min_width == settings.blobs.min_width * 2
+    assert scaled.geometry.hud_boxes[0][2] == settings.geometry.hud_boxes[0][2] * 2
+
+
+def test_locate_panel_rejects_a_blank_frame():
+    assert locate_panel(np.zeros((1080, 1920, 3), np.uint8)) is None
+
+
+# -- playing-state hardening -------------------------------------------------
+def _paint_boxes(frame, hsv_color, boxes, rng):
+    import cv2
+
+    settings = Settings()
+    x0, y0, _, _ = settings.geometry.panel
+    h, s, v = hsv_color
+    for bx0, by0, bx1, by1 in boxes:
+        shape = (by1 - by0, bx1 - bx0)
+        pixels = np.stack([
+            np.clip(rng.normal(h, 1.5, shape), 0, 179),
+            np.clip(rng.normal(s, 8, shape), 0, 255),
+            np.clip(rng.uniform(v - 60, v + 45, shape), 0, 255),
+        ], axis=-1).astype(np.uint8)
+        frame[y0 + by0:y0 + by1, x0 + bx0:x0 + bx1] = \
+            cv2.cvtColor(pixels, cv2.COLOR_HSV2BGR)
+
+
+def _classify_synthetic(frame):
+    tracker = SessionTracker(backend=None, settings=Settings())
+    return tracker.classify(0.0, frame)
+
+
+def test_gold_menu_text_is_not_playing():
+    """The arcade pages leak saturated gold UI text into the HUD regions;
+    it must fail the colour plausibility gate, not read as a running game.
+    This is a real false positive observed on the start screen."""
+    rng = np.random.default_rng(3)
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    gold = (25, 190, 200)      # far more saturated than the HUD yellow-green
+    _paint_boxes(frame, gold, Settings().geometry.hud_boxes, rng)
+    assert _classify_synthetic(frame) is not GameState.PLAYING
+
+
+def test_one_lit_box_is_not_playing():
+    """Score, timer and high-score are all present in a real round; a single
+    lit rectangle is page furniture, not gameplay."""
+    rng = np.random.default_rng(3)
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    hud = (39, 102, 165)       # genuine HUD colour, but only one box
+    _paint_boxes(frame, hud, Settings().geometry.hud_boxes[:1], rng)
+    assert _classify_synthetic(frame) is not GameState.PLAYING
+
+
+def test_all_boxes_in_hud_colour_is_playing():
+    rng = np.random.default_rng(3)
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    hud = (39, 102, 165)
+    _paint_boxes(frame, hud, Settings().geometry.hud_boxes, rng)
+    assert _classify_synthetic(frame) is GameState.PLAYING
+
+
+# -- full-game clip ----------------------------------------------------------
+pytestmark_clips = pytest.mark.clips
+
+
+@pytest.fixture(scope="module")
+def fullgame_frames():
+    if not FULLGAME.exists():
+        pytest.skip(f"{FULLGAME} not present")
+    import cv2
+
+    capture = cv2.VideoCapture(str(FULLGAME))
+    fps = capture.get(cv2.CAP_PROP_FPS) or 60
+
+    def grab(seconds):
+        capture.set(cv2.CAP_PROP_POS_FRAMES, int(seconds * fps))
+        ok, frame = capture.read()
+        assert ok, f"no frame at {seconds}s"
+        return frame
+
+    yield grab
+    capture.release()
+
+
+@pytest.fixture(scope="module")
+def tracker():
+    from automaton_attack.ocr import OcrUnavailable, get_backend
+
+    try:
+        backend = get_backend("auto")
+    except (OcrUnavailable, Exception) as exc:  # noqa: BLE001
+        pytest.skip(f"no OCR backend: {exc}")
+    return SessionTracker(backend, Settings())
+
+
+@pytest.mark.clips
+def test_locate_panel_matches_measured_geometry(fullgame_frames):
+    located = locate_panel(fullgame_frames(1.0))
+    assert located is not None
+    for got, expected in zip(located, Settings().geometry.panel):
+        assert abs(got - expected) <= 10
+
+
+@pytest.mark.clips
+def test_states_classify_across_the_round(fullgame_frames, tracker):
+    assert tracker.classify(1.0, fullgame_frames(1.0)) is GameState.START_SCREEN
+    assert tracker.classify(30.0, fullgame_frames(30.0)) is GameState.PLAYING
+    assert tracker.classify(70.4, fullgame_frames(70.4)) is GameState.GAME_OVER
+
+
+@pytest.mark.clips
+def test_final_score_is_read(fullgame_frames, tracker):
+    assert tracker.read_final_score(fullgame_frames(70.4)) == FULLGAME_SCORE
+
+
+@pytest.mark.clips
+def test_full_game_replay_walks_the_whole_lifecycle():
+    from automaton_attack.capture import VideoSource
+    from automaton_attack.detect import Detector
+    from automaton_attack.engine import Engine
+    from automaton_attack.lexicon import Lexicon
+    from automaton_attack.ocr import get_backend
+
+    settings = Settings()
+    backend = get_backend("auto")
+    lexicon = Lexicon.load()
+    source = VideoSource(FULLGAME, settings.behaviour.replay_stride)
+    settings = settings.for_resolution(source.width, source.height)
+    detector = Detector(lexicon, backend, settings)
+    engine = Engine(detector, settings=settings)
+    tracker = SessionTracker(backend, settings)
+
+    for timestamp, frame in source.frames():
+        if tracker.classify(timestamp, frame) is GameState.PLAYING:
+            engine.process(timestamp, frame)
+
+    states = [t.state for t in tracker.transitions]
+    assert states == [GameState.START_SCREEN, GameState.PLAYING,
+                      GameState.GAME_OVER]
+    assert tracker.final_score == FULLGAME_SCORE
+    assert engine.stats.typed >= 40      # a full round of words came through
+
+
+# -- score parsing -----------------------------------------------------------
+@pytest.mark.parametrize("row, expected", [
+    ("TOTAL SCORE 750", 750),
+    ("TOTAL SCORE 1,150", 1150),
+    ("TOTALSCORE1150", 1150),
+    ("TOTALSCOREL150", 1150),      # "1," read as L -- observed live
+    ("TOTAL SCORC750", 750),       # label mangled: trailing digits only
+    ("TOTAL SCORE I,I50", 1150),   # ones as I
+    ("", None),
+    ("PLAY AGAIN", None),
+])
+def test_parse_score_survives_ocr_noise(row, expected):
+    from automaton_attack.session import parse_score
+
+    assert parse_score(row) == expected
+
+
+def test_score_settles_only_on_two_equal_reads():
+    """The game-over score animates upward; 150 was reported for a final
+    1,150 because the first frame's value was trusted. Two consecutive
+    identical reads are required now."""
+    tracker = SessionTracker(backend=None, settings=Settings())
+    tracker.state = GameState.GAME_OVER
+
+    reads = iter([150, 900, 1150, 1150])
+    tracker.read_final_score = lambda frame: next(reads)
+    tracker._read_bright_text = lambda region: "GAMEOVER"
+
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    for expected_settled in (False, False, False, True):
+        tracker._last_ocr = -1e9        # bypass the OCR throttle
+        tracker.classify(0.0, frame)
+        assert tracker.score_settled is expected_settled
+    assert tracker.final_score == 1150
