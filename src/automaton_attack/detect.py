@@ -259,37 +259,53 @@ class Detector:
         for i, top in enumerate(detections):
             if consumed[i]:
                 continue
-            merged = None
+            # Grow a chain of vertically adjacent, overlapping lines and
+            # keep the best-matching prefix. A wide phrase wraps to TWO
+            # lines; a narrow one wraps to THREE ("YOU'LL LOOK GOOD /
+            # WITH AN APPLE IN / YER MOUTH").
+            chain = [i]
+            best: tuple[list[int], object] | None = None
+            current = top
             for j in range(i + 1, len(detections)):
                 if consumed[j]:
                     continue
                 below = detections[j]
-                gap = below.box[1] - (top.box[1] + top.box[3])
+                gap = below.box[1] - (current.box[1] + current.box[3])
                 if gap > max_gap:
                     break
                 if gap < -5:
                     continue
-                overlap = (min(top.box[0] + top.box[2],
+                overlap = (min(current.box[0] + current.box[2],
                                below.box[0] + below.box[2])
-                           - max(top.box[0], below.box[0]))
-                if overlap < 0.5 * min(top.box[2], below.box[2]):
+                           - max(current.box[0], below.box[0]))
+                if overlap < 0.5 * min(current.box[2], below.box[2]):
                     continue
-                if (top.match and top.match.score >= 0.9
-                        and below.match and below.match.score >= 0.9):
-                    continue        # two independent, confident words
-                joined = f"{top.raw.strip()} {below.raw.strip()}"
+                if (below.match and below.match.score >= 0.9
+                        and all(detections[k].match
+                                and detections[k].match.score >= 0.9
+                                for k in chain)):
+                    continue        # confident words stay independent
+                chain.append(j)
+                current = below
+                joined = " ".join(detections[k].raw.strip() for k in chain)
                 match = self.lexicon.match(joined, allow_fallback=False)
-                if match is None or match.score < self.STITCH_MIN_SCORE:
-                    continue
-                x0 = min(top.box[0], below.box[0])
-                y0 = top.box[1]
-                x1 = max(top.box[0] + top.box[2],
-                         below.box[0] + below.box[2])
-                y1 = below.box[1] + below.box[3]
-                merged = Detection(box=(x0, y0, x1 - x0, y1 - y0),
-                                   raw=joined, match=match)
-                consumed[j] = True
-                break
-            out.append(merged if merged else top)
-            consumed[i] = True
+                if match is not None and match.score >= self.STITCH_MIN_SCORE:
+                    best = (list(chain), match)
+                if len(chain) >= 4:
+                    break
+            if best is not None:
+                indices, match = best
+                parts = [detections[k] for k in indices]
+                x0 = min(p.box[0] for p in parts)
+                y0 = parts[0].box[1]
+                x1 = max(p.box[0] + p.box[2] for p in parts)
+                y1 = parts[-1].box[1] + parts[-1].box[3]
+                joined = " ".join(p.raw.strip() for p in parts)
+                out.append(Detection(box=(x0, y0, x1 - x0, y1 - y0),
+                                     raw=joined, match=match))
+                for k in indices:
+                    consumed[k] = True
+            else:
+                out.append(top)
+                consumed[i] = True
         return out

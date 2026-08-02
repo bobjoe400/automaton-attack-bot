@@ -179,3 +179,28 @@ def test_distant_lines_are_not_stitched():
     far_below = Detection(box=(380, 700, 120, 22), raw="STUPIDITY.",
                           match=None)
     assert len(detector._stitch_wrapped_lines([top, far_below])) == 2
+
+
+def test_three_line_wrapped_phrase_is_stitched():
+    """Narrow phrases wrap to THREE lines ('YOU'LL LOOK GOOD / WITH AN
+    APPLE IN / YER MOUTH'); the chain stitcher must absorb all of them,
+    not just a pair. A DIVINE RAPIER hidden behind this exact cluster
+    escaped while the phrase resolved late."""
+    from automaton_attack.detect import Detection
+    from automaton_attack.lexicon import Lexicon
+
+    lexicon = Lexicon(
+        ["Placeholder"],
+        phrases=["You'll look good with an apple in yer mouth!"])
+    detector = Detector(lexicon, NoOcr(), Settings())
+    lines = [
+        Detection(box=(320, 400, 300, 22), raw="YOU'LL LOOK GOOD",
+                  match=None),
+        Detection(box=(310, 428, 320, 22), raw="WITH AN APPLE IN",
+                  match=None),
+        Detection(box=(350, 456, 200, 22), raw="YER MOUTH", match=None),
+    ]
+    stitched = detector._stitch_wrapped_lines(lines)
+    assert len(stitched) == 1
+    assert stitched[0].match is not None
+    assert stitched[0].match.keystrokes == "youlllookgoodwithanappleinyermouth"
