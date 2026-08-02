@@ -1,6 +1,6 @@
 [project]
 name = "automaton-attack-bot"
-version = "0.1.0"
+version = "1.0.0"
 description = "Computer-vision bot for the Automaton Attack typing minigame in Dota 2's Dark Carnival"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,6 +31,7 @@ automaton = "automaton_attack_bot.cli:main"
 
 [dependency-groups]
 dev = [
+    "pyinstaller>=6.0",
     "pytest>=8.0",
 ]
 
