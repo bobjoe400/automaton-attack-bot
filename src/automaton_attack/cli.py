@@ -508,17 +508,21 @@ class _Log:
             self._file.close()
             self._file = None
 
-    def _to_file(self, text: str) -> None:
+    def _to_file(self, text: str, flush: bool) -> None:
         if self._file is not None:
             self._file.write(text + "\n")
-            self._file.flush()
+            if flush:
+                self._file.flush()
 
     def say(self, text: str = "") -> None:
         print(text)
-        self._to_file(text)
+        self._to_file(text, flush=True)
 
     def trace(self, text: str) -> None:
-        self._to_file(text)
+        # No flush: a syscall per detail line would tax the scan-consume
+        # path for nothing. The OS buffers ~8KB blocks; say() events and
+        # close() flush, so the signal always reaches disk immediately.
+        self._to_file(text, flush=False)
         if self._file is None or self.echo_detail:
             print(text)
 
