@@ -184,6 +184,10 @@ def test_full_game_replay_walks_the_whole_lifecycle():
     from automaton_attack.ocr import get_backend
 
     settings = Settings()
+    # replay semantics: typed words never vanish on tape (see test_clips)
+    data = settings.to_dict()
+    data["behaviour"]["dedup_ttl"] = max(3.0, data["behaviour"]["dedup_ttl"])
+    settings = Settings.from_dict(data)
     backend = get_backend("auto")
     lexicon = Lexicon.load()
     source = VideoSource(FULLGAME, settings.behaviour.replay_stride)

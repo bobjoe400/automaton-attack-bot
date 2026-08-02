@@ -61,6 +61,11 @@ def play(clip_name, lexicon, backend, settings=None):
     if not path.exists():
         pytest.skip(f"{path} not present; see the module docstring")
     settings = settings or Settings()
+    # Replay semantics: on tape typed words never disappear, so the live
+    # short-TTL retype rule would just duplicate every entry.
+    data = settings.to_dict()
+    data["behaviour"]["dedup_ttl"] = max(3.0, data["behaviour"]["dedup_ttl"])
+    settings = Settings.from_dict(data)
     source = VideoSource(path, settings.behaviour.replay_stride)
     settings = settings.for_resolution(source.width, source.height)
     engine = Engine(Detector(lexicon, backend, settings), settings=settings)
