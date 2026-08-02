@@ -235,13 +235,45 @@ class Detector:
         else:
             raws = [self.backend.read(prepare(mask, box)) for box in boxes]
         detections = []
-        for box, raw in zip(boxes, raws):
+        retry_indices = []
+        for index, (box, raw) in enumerate(zip(boxes, raws)):
             match = self.lexicon.match(
                 raw, allow_fallback=not self.settings.safe_mode
             ) if raw else None
             detections.append(Detection(box=box, raw=raw, match=match))
+            if match is None or match.source == "fallback":
+                retry_indices.append(index)
+        # Second chance for glare fragments: explosion glow and spawn
+        # flashes degrade the threshold mask far more than the raw pixels
+        # ('FNU!' where BLITZ KNUCKLES was legible to the eye). Re-OCR the
+        # colour crop for the few unmatched blobs.
+        for index in retry_indices[:3]:
+            box = boxes[index]
+            second = self._read_colour_crop(frame_bgr, box)
+            if not second:
+                continue
+            match = self.lexicon.match(
+                second, allow_fallback=not self.settings.safe_mode)
+            old = detections[index]
+            if match is not None and (old.match is None
+                                      or match.score > old.match.score):
+                detections[index] = Detection(box=box, raw=second,
+                                              match=match)
         detections = self._stitch_wrapped_lines(detections)
         return [d for d in detections if d.match or include_unmatched]
+
+    def _read_colour_crop(self, frame_bgr: np.ndarray,
+                          box: tuple[int, int, int, int]) -> str:
+        bx, by, bw, bh = box
+        x0, y0, _, _ = self.settings.geometry.panel
+        pad = 4
+        crop = frame_bgr[max(0, y0 + by - pad):y0 + by + bh + pad,
+                         max(0, x0 + bx - pad):x0 + bx + bw + pad]
+        if crop.size == 0:
+            return ""
+        upscaled = cv2.resize(crop, None, fx=2, fy=2,
+                              interpolation=cv2.INTER_CUBIC)
+        return self.backend.read(upscaled)
 
     # A wrapped phrase's second line starts within a line-height below the
     # first; a merge is accepted only on a confident corpus match.
