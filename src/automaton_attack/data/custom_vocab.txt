@@ -22,6 +22,11 @@ Imperia
 Gralla
 Boots
 Hypothermia
+Ogre Club
+
+# The game renders these differently from upstream's item names:
+Sange and Yasha and Kaya
+Spirit Bear
 
 # The game renders this hero's CURRENT name; dotaconstants carries the old
 # one. Both stay in vocab -- exact reads beat fuzzy steals either way.

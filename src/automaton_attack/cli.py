@@ -290,7 +290,9 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
             if panel:
                 drift = max(abs(a - b) for a, b in
                             zip(panel, settings.geometry.panel))
-                if drift > 8:
+                # Rebuilds are cheap, and even a few pixels of offset can
+                # clip the tight digit crops (score, timer).
+                if drift > 3:
                     settings = settings.with_panel(panel)
                     detector = Detector(lexicon, backend, settings)
                     engine.detector = detector
@@ -326,10 +328,10 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                 game_over_at = timestamp
                 score_reported = False
             # The displayed score counts up as the modal appears; report
-            # only once the same value has been read twice (or it has had
-            # ample time to finish animating).
+            # only once the settled criteria hold (or the animation has had
+            # ample time and the best confirmed value stands).
             if not score_reported and (tracker.score_settled
-                                       or timestamp - game_over_at > 4.0):
+                                       or timestamp - game_over_at > 5.0):
                 score_reported = True
                 score = tracker.final_score
                 print(f"[{timestamp:7.2f}s] GAME OVER -- total score: "
@@ -477,7 +479,9 @@ def cmd_analyze(args) -> int:
             if panel:
                 drift = max(abs(a - b) for a, b in
                             zip(panel, settings.geometry.panel))
-                if drift > 8:
+                # Rebuilds are cheap, and even a few pixels of offset can
+                # clip the tight digit crops (score, timer).
+                if drift > 3:
                     settings = settings.with_panel(panel)
             elif not args.no_locate_panel:
                 continue    # wait for a frame the panel can be found on
@@ -485,9 +489,10 @@ def cmd_analyze(args) -> int:
             tracker = SessionTracker(backend, settings)
         if tracker.classify(timestamp, frame) is not GameState.PLAYING:
             continue
+        clock = tracker.read_timer(frame)
         for detection in detector.detect(frame, include_unmatched=True,
                                          timestamp=timestamp):
-            log.add(timestamp, detection)
+            log.add(timestamp, detection, clock=clock)
 
     print()
     print(log.report())

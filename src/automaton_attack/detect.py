@@ -22,6 +22,7 @@ Two things share the words' colour and must not reach OCR:
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import cv2
@@ -73,6 +74,12 @@ class Detector:
         self._calibrated: tuple | None = None   # last good HUD-derived range
         self.last_anchor: autocolor.ColorAnchor | None = None
         self._mask_history: deque[tuple[float, np.ndarray]] = deque()
+        # Blobs are OCRed concurrently when the backend can take it (an
+        # OcrPool); a busy screen has 6-10 blobs at ~50 ms each.
+        workers = getattr(backend, "size", 1)
+        self._ocr_executor = (ThreadPoolExecutor(max_workers=workers,
+                                                 thread_name_prefix="ocr")
+                              if workers > 1 else None)
 
     @property
     def active_range(self) -> tuple:
@@ -156,9 +163,14 @@ class Detector:
         static = self._static_mask(mask, timestamp)
         if static is not None:
             mask[static > 0] = 0
+        boxes = self.blobs(mask)
+        if self._ocr_executor is not None and len(boxes) > 1:
+            raws = list(self._ocr_executor.map(
+                lambda box: self.backend.read(prepare(mask, box)), boxes))
+        else:
+            raws = [self.backend.read(prepare(mask, box)) for box in boxes]
         results = []
-        for box in self.blobs(mask):
-            raw = self.backend.read(prepare(mask, box))
+        for box, raw in zip(boxes, raws):
             match = self.lexicon.match(
                 raw, allow_fallback=not self.settings.safe_mode
             ) if raw else None
