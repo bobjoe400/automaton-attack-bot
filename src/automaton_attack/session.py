@@ -64,6 +64,30 @@ def _letters(text: str) -> str:
     return "".join(c for c in text.upper() if c.isalpha())
 
 
+# OCR confuses these with digits in the score line ("1," reads as "L").
+# Applied only to the text after the SCORE label, never to words.
+_DIGIT_LOOKALIKES = str.maketrans({"O": "0", "I": "1", "L": "1", "l": "1",
+                                   "B": "8", "S": "5", "Z": "2"})
+
+
+def parse_score(row: str) -> int | None:
+    """Extract the number from a "Total Score 1,150" OCR read.
+
+    The read is messy: separators vanish, and digits come back as
+    lookalike letters ("1,150" has been observed as "L150"). Everything
+    after the SCORE label is treated as digits-in-disguise; without a
+    label, only a clean trailing number is trusted.
+    """
+    text = row.upper().replace(",", "").replace(".", "").replace(" ", "")
+    label = text.rfind("SCOR")
+    if label >= 0:
+        tail = text[label + 4:].lstrip("E").translate(_DIGIT_LOOKALIKES)
+        digits = "".join(c for c in tail if c.isdigit())
+        return int(digits) if digits else None
+    match = re.search(r"(\d+)$", text)
+    return int(match.group(1)) if match else None
+
+
 def _fuzzy_contains(text: str, key: str) -> bool:
     if key in text:
         return True
@@ -121,6 +145,11 @@ class SessionTracker:
         self.state = GameState.UNKNOWN
         self.transitions: list[Transition] = []
         self.final_score: int | None = None
+        # The game-over score counts up when the modal appears; a single
+        # read mid-animation is wrong (150 observed for a final 1,150).
+        # settled = the same non-None value on two consecutive reads.
+        self.score_settled = False
+        self._last_score_read: int | None = None
         self._last_ocr = -1e9
 
     # -- geometry helpers -------------------------------------------------
@@ -156,8 +185,7 @@ class SessionTracker:
         """Read "Total Score NNN" off the game-over screen."""
         row = self._read_bright_text(
             self._region(self._panel(frame), SCORE_ROW_REGION))
-        digits = re.search(r"(\d+)\s*$", row.replace(",", "").replace(" ", ""))
-        return int(digits.group(1)) if digits else None
+        return parse_score(row)
 
     def _hud_visible(self, hsv: np.ndarray) -> bool:
         """True only when the gameplay HUD -- not lookalike UI -- is up.
@@ -197,10 +225,13 @@ class SessionTracker:
         title = _letters(self._read_bright_text(
             self._region(panel, TITLE_REGION)))
         if _fuzzy_contains(title, GAME_OVER_KEY):
-            state = GameState.GAME_OVER
-            if self.final_score is None or self.state is not GameState.GAME_OVER:
-                self.final_score = self.read_final_score(frame)
-            return self._advance(timestamp, state)
+            score = self.read_final_score(frame)
+            self.score_settled = (score is not None
+                                  and score == self._last_score_read)
+            self._last_score_read = score
+            if score is not None:
+                self.final_score = score
+            return self._advance(timestamp, GameState.GAME_OVER)
         if _fuzzy_contains(title, START_TITLE_KEY):
             return self._advance(timestamp, GameState.START_SCREEN)
         return self._advance(timestamp, GameState.UNKNOWN)
@@ -211,4 +242,6 @@ class SessionTracker:
             self.state = state
             if state is GameState.PLAYING:
                 self.final_score = None
+                self.score_settled = False
+                self._last_score_read = None
         return state

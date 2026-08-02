@@ -126,3 +126,23 @@ def test_recent_patch_items_are_present(vocab_only):
     for item in ("SHAWL", "CHASMSTONE", "SPLINTMAIL", "WIZARDHAT",
                  "HYDRASBREATH"):
         assert item in keys, f"{item} missing from vocab.txt"
+
+
+def test_ocr_output_is_ascii_safe():
+    """PP-OCR emits CJK punctuation for glyph fragments; it must never
+    reach the console (cp1252 crashes) or the matcher."""
+    from automaton_attack.ocr import clean_text
+
+    assert clean_text("TOWER\u3001") == "TOWER"
+    assert clean_text("\u3001\uff0c") == ""
+    assert clean_text("meteor hammer") == "METEOR HAMMER"
+
+
+def test_custom_vocab_additions_apply_at_load_time(vocab_only):
+    """'Tower' was observed as a live target word but is not a hero, item
+    or ability -- it comes from custom_vocab.txt, applied without a corpus
+    rebuild."""
+    match = vocab_only.match("TOWER")
+    assert match is not None
+    assert match.name == "TOWER"
+    assert match.score == pytest.approx(1.0)

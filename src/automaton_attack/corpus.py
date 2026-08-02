@@ -142,7 +142,7 @@ def _usable_name(name: str, key: str = "") -> bool:
     return NAME_SHAPE.match(name) is not None
 
 
-def _custom_entries() -> tuple[set[str], set[str]]:
+def custom_entries() -> tuple[set[str], set[str]]:
     """Hand-maintained additions and exclusions from custom_vocab.txt.
 
     Lines starting with ``-`` are exclusions; everything else is an addition.
@@ -180,7 +180,7 @@ def build_vocab(verbose: bool = True) -> list[str]:
         if verbose:
             print(f"    {count} usable names from {filename}")
 
-    additions, exclusions = _custom_entries()
+    additions, exclusions = custom_entries()
     names |= additions
     names -= exclusions
     names -= RETIRED

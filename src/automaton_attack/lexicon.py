@@ -86,10 +86,18 @@ class Lexicon:
             phrase_file = Path(phrases_path) if phrases_path else None
         if not vocab_file.exists():
             raise FileNotFoundError(f"vocabulary not found: {vocab_file}")
+        entries = _read_entries(vocab_file)
+        # Apply custom_vocab.txt at load time, not just at corpus build time:
+        # an addition discovered in live play must take effect on the next
+        # run, without waiting for a re-download.
+        additions, exclusions = corpus.custom_entries()
+        entries = [e for e in entries if e not in exclusions]
+        known = set(entries)
+        entries.extend(sorted(a for a in additions if a not in known))
         phrases: list[str] = []
         if with_phrases and phrase_file and phrase_file.exists():
             phrases = _read_entries(phrase_file)
-        return cls(_read_entries(vocab_file), phrases, matching)
+        return cls(entries, phrases, matching)
 
     def __len__(self) -> int:
         return len(self.vocab)

@@ -11,3 +11,6 @@
 # Retired from the game but still present in dotaconstants:
 - Cornucopia
 - Eternal Shroud
+
+# Dota terms seen as target words in live play (not in dotaconstants):
+Tower

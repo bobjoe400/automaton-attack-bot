@@ -227,6 +227,9 @@ def _drive(frames, lexicon, backend, settings, typist, *,
     last_click = -1e9
     first_timestamp = None
     hinted = False
+    seen_playing = False
+    game_over_at = None
+    score_reported = False
 
     for timestamp, frame in frames:
         if first_timestamp is None:
@@ -256,6 +259,7 @@ def _drive(frames, lexicon, backend, settings, typist, *,
                   "on the captured monitor? (--debug shows every OCR read)")
 
         if state is GameState.PLAYING:
+            seen_playing = True
             for word in engine.process(timestamp, frame):
                 print(_describe(word))
             if debug:
@@ -264,17 +268,30 @@ def _drive(frames, lexicon, backend, settings, typist, *,
                           f"-> {d.name or '-'} ({d.score:.2f})")
             continue
 
-        if state is GameState.GAME_OVER and previous is not GameState.GAME_OVER:
-            rounds_done += 1
-            score = tracker.final_score
-            print(f"[{timestamp:7.2f}s] GAME OVER -- total score: "
-                  f"{score if score is not None else 'unreadable'}")
-            if rounds_done >= rounds and stop_on_game_over:
-                break
+        if state is GameState.GAME_OVER:
+            if previous is not GameState.GAME_OVER:
+                game_over_at = timestamp
+                score_reported = False
+            # The displayed score counts up as the modal appears; report
+            # only once the same value has been read twice (or it has had
+            # ample time to finish animating).
+            if not score_reported and (tracker.score_settled
+                                       or timestamp - game_over_at > 4.0):
+                score_reported = True
+                score = tracker.final_score
+                print(f"[{timestamp:7.2f}s] GAME OVER -- total score: "
+                      f"{score if score is not None else 'unreadable'}"
+                      + ("" if seen_playing
+                         else " (stale: no round played yet)"))
+                if seen_playing:
+                    rounds_done += 1
+                    if rounds_done >= rounds and stop_on_game_over:
+                        break
 
         if (auto_start and timestamp - last_click > 2.0
                 and state in (GameState.START_SCREEN, GameState.GAME_OVER)):
-            if state is GameState.GAME_OVER and rounds_done >= rounds:
+            if state is GameState.GAME_OVER and (
+                    not score_reported or rounds_done >= rounds):
                 continue
             x, y = tracker.button_position(state)
             label = ("PLAY" if state is GameState.START_SCREEN

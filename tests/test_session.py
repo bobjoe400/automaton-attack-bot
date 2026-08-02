@@ -201,3 +201,39 @@ def test_full_game_replay_walks_the_whole_lifecycle():
                       GameState.GAME_OVER]
     assert tracker.final_score == FULLGAME_SCORE
     assert engine.stats.typed >= 40      # a full round of words came through
+
+
+# -- score parsing -----------------------------------------------------------
+@pytest.mark.parametrize("row, expected", [
+    ("TOTAL SCORE 750", 750),
+    ("TOTAL SCORE 1,150", 1150),
+    ("TOTALSCORE1150", 1150),
+    ("TOTALSCOREL150", 1150),      # "1," read as L -- observed live
+    ("TOTAL SCORC750", 750),       # label mangled: trailing digits only
+    ("TOTAL SCORE I,I50", 1150),   # ones as I
+    ("", None),
+    ("PLAY AGAIN", None),
+])
+def test_parse_score_survives_ocr_noise(row, expected):
+    from automaton_attack.session import parse_score
+
+    assert parse_score(row) == expected
+
+
+def test_score_settles_only_on_two_equal_reads():
+    """The game-over score animates upward; 150 was reported for a final
+    1,150 because the first frame's value was trusted. Two consecutive
+    identical reads are required now."""
+    tracker = SessionTracker(backend=None, settings=Settings())
+    tracker.state = GameState.GAME_OVER
+
+    reads = iter([150, 900, 1150, 1150])
+    tracker.read_final_score = lambda frame: next(reads)
+    tracker._read_bright_text = lambda region: "GAMEOVER"
+
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    for expected_settled in (False, False, False, True):
+        tracker._last_ocr = -1e9        # bypass the OCR throttle
+        tracker.classify(0.0, frame)
+        assert tracker.score_settled is expected_settled
+    assert tracker.final_score == 1150

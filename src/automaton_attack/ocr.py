@@ -60,6 +60,17 @@ def prepare(mask: np.ndarray, box: tuple[int, int, int, int]) -> np.ndarray:
     return 255 - roi
 
 
+def clean_text(text: str) -> str:
+    """Printable-ASCII-only uppercase.
+
+    The game's target words are ASCII, but PP-OCR's recognition model is
+    multilingual and happily emits CJK punctuation for glyph fragments.
+    Anything non-ASCII is noise for us -- and it crashes printing on
+    Windows consoles (cp1252) if allowed through.
+    """
+    return "".join(c for c in text if c.isascii() and c.isprintable()).upper()
+
+
 class RapidOcrBackend:
     """PP-OCR recognition via ONNX Runtime. No system dependencies."""
 
@@ -84,7 +95,7 @@ class RapidOcrBackend:
                                  use_rec=True)
         if not result:
             return ""
-        return " ".join(str(line[0]) for line in result).upper()
+        return clean_text(" ".join(str(line[0]) for line in result))
 
 
 class TesseractBackend:
@@ -114,7 +125,7 @@ class TesseractBackend:
             return ""
         text = self._pytesseract.image_to_string(image,
                                                  config=TESSERACT_CONFIG)
-        return " ".join(text.split()).upper()
+        return clean_text(" ".join(text.split()))
 
 
 class OcrUnavailable(RuntimeError):
