@@ -186,7 +186,8 @@ class OcrPool:
 
 
 BACKENDS = ("rapidocr", "tesseract")
-POOL_SIZE = min(4, (os.cpu_count() or 2) - 1)
+# Sized for TWO pipelined scans of a busy screen (4-8 blobs each).
+POOL_SIZE = min(8, max(2, (os.cpu_count() or 4) - 2))
 
 
 def get_backend(name: str = "auto", pool: bool = True) -> OcrBackend:

@@ -163,14 +163,23 @@ class Engine:
 
     def process(self, timestamp: float,
                 frame: np.ndarray) -> list[TypedWord]:
-        """Scan one frame and type whatever clears both guards.
+        """Scan one frame and type whatever clears both guards."""
+        detections = self.detector.detect(frame, include_unmatched=True,
+                                          timestamp=timestamp)
+        return self.process_detections(timestamp, detections)
+
+    def process_detections(self, timestamp: float,
+                           detections: list[Detection]) -> list[TypedWord]:
+        """Decide and dispatch for one scan's detections.
+
+        Split from detection so scans can be OCRed in a pipeline (two in
+        flight) while decisions stay strictly ordered -- the confirmer's
+        consecutive-scan semantics depend on order.
 
         Words closest to the platform are typed first: everything queued
         behind a keystroke burst drops a little further while it waits, so
         the word about to die must not wait behind a fresh spawn.
         """
-        detections = self.detector.detect(frame, include_unmatched=True,
-                                          timestamp=timestamp)
         detections.sort(key=self._urgency)
         self.last_detections = detections
         self.stats.frames += 1

@@ -236,7 +236,10 @@ def _drive(frames, lexicon, backend, settings, typist, *,
     engine = Engine(detector, typist, settings)
     tracker = SessionTracker(backend, settings)
     worker = None
+    scan_pipeline = None
     if threaded:
+        from concurrent.futures import ThreadPoolExecutor
+
         from .keyboard import TypingWorker
 
         def emit(word, waited):
@@ -245,6 +248,11 @@ def _drive(frames, lexicon, backend, settings, typist, *,
         worker = TypingWorker(typist, engine._urgency, on_typed=emit)
         engine.dispatch = worker.submit
         worker.start()
+        # Detection is pipelined: while one scan's OCR runs, the next
+        # frame's starts. Decisions stay strictly ordered (the confirmer's
+        # consecutive-scan semantics require it); only the OCR overlaps.
+        scan_pipeline = ThreadPoolExecutor(max_workers=2,
+                                           thread_name_prefix="scan")
     # Geometry is "proven" once the tracker recognises any game state with
     # it. Until then, keep re-locating: locking on the first plausible
     # rectangle once blinded a whole session when a transitional frame
@@ -261,11 +269,14 @@ def _drive(frames, lexicon, backend, settings, typist, *,
     try:
         return _drive_loop(
             frames, lexicon, backend, settings, typist, engine, tracker,
-            worker, locate=locate, auto_start=auto_start, rounds=rounds,
+            worker, scan_pipeline,
+            locate=locate, auto_start=auto_start, rounds=rounds,
             stop_on_game_over=stop_on_game_over, debug=debug,
             state_vars=(proven, rounds_done, last_click, first_timestamp,
                         hinted, seen_playing, game_over_at, score_reported))
     finally:
+        if scan_pipeline is not None:
+            scan_pipeline.shutdown(wait=False, cancel_futures=True)
         if worker is not None:
             worker.stop()
             if worker.dropped_stale:
@@ -277,8 +288,10 @@ def _drive(frames, lexicon, backend, settings, typist, *,
 
 
 def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
-                worker, *, locate, auto_start, rounds, stop_on_game_over,
-                debug, state_vars):
+                worker, scan_pipeline, *, locate, auto_start, rounds,
+                stop_on_game_over, debug, state_vars):
+    from collections import deque
+
     from .detect import Detector
     from .session import GameState, SessionTracker, locate_panel
 
@@ -286,6 +299,15 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
      hinted, seen_playing, game_over_at, score_reported) = state_vars
     last_multiplier = None
     last_multiplier_read = -1e9
+    in_flight = deque()     # (timestamp, future) of pipelined detections
+
+    def drain(block: bool = False) -> None:
+        while in_flight and (block or in_flight[0][1].done()
+                             or len(in_flight) >= 2):
+            scan_ts, future = in_flight.popleft()
+            for word in engine.process_detections(scan_ts, future.result()):
+                if worker is None:
+                    print(_describe(word))
 
     for timestamp, frame in frames:
         if first_timestamp is None:
@@ -324,9 +346,15 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                 last_multiplier = None
             seen_playing = True
             # Words first -- telemetry OCR must never delay a keystroke.
-            for word in engine.process(timestamp, frame):
-                if worker is None:      # threaded mode prints at type time
-                    print(_describe(word))
+            if scan_pipeline is not None:
+                in_flight.append((timestamp, scan_pipeline.submit(
+                    engine.detector.detect, frame,
+                    include_unmatched=True, timestamp=timestamp)))
+                drain()
+            else:
+                for word in engine.process(timestamp, frame):
+                    if worker is None:  # threaded mode prints at type time
+                        print(_describe(word))
             # Log the combo so a loss is findable in the log (and footage)
             # without a post-hoc OCR scrub of the whole recording.
             if timestamp - last_multiplier_read >= 0.5:
@@ -350,6 +378,10 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                     print(f"    ({d.box[0]:4},{d.box[1]:4}) ocr={d.raw!r} "
                           f"-> {d.name or '-'} ({d.score:.2f})")
             continue
+
+        if state is not GameState.PLAYING and in_flight:
+            # The round is over; scans still in the pipeline belong to it.
+            in_flight.clear()
 
         if state is GameState.GAME_OVER:
             if previous is not GameState.GAME_OVER:

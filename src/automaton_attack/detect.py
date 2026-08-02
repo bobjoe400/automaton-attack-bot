@@ -21,6 +21,7 @@ Two things share the words' colour and must not reach OCR:
 
 from __future__ import annotations
 
+import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -79,6 +80,10 @@ class Detector:
         self._calibrated: tuple | None = None   # last good HUD-derived range
         self.last_anchor: autocolor.ColorAnchor | None = None
         self._mask_history: deque[tuple[float, np.ndarray]] = deque()
+        # Two scans may be detected concurrently (pipelined); calibration
+        # and static-history state is shared and must be mutated under a
+        # lock. OCR itself runs unlocked.
+        self._state_lock = threading.Lock()
         # Blobs are OCRed concurrently when the backend can take it (an
         # OcrPool); a busy screen has 6-10 blobs at ~50 ms each.
         workers = getattr(backend, "size", 1)
@@ -108,11 +113,12 @@ class Detector:
             # whatever the display (HDR, night light, LUTs) is doing to it.
             anchor = autocolor.measure(hsv, self.settings.geometry.hud_boxes)
             if anchor:
-                self.last_anchor = anchor
                 calibrated = autocolor.shifted_range(
                     anchor, color.hsv_lo, color.hsv_hi)
-                if calibrated:
-                    self._calibrated = calibrated
+                with self._state_lock:
+                    self.last_anchor = anchor
+                    if calibrated:
+                        self._calibrated = calibrated
         lo, hi = self.active_range
         mask = cv2.inRange(hsv, lo, hi)
         # The score, timer and high-score boxes use the same yellow-green.
@@ -194,18 +200,21 @@ class Detector:
         """Pixels lit continuously across the history window: HUD, not words."""
         if timestamp is None:
             return None
-        history = self._mask_history
-        if history and history[-1][1].shape != mask.shape:
-            history.clear()             # geometry changed mid-run
-        if not history or timestamp - history[-1][0] >= STATIC_SAMPLE_GAP:
-            history.append((timestamp, mask.copy()))
-        while len(history) > 2 and timestamp - history[1][0] >= STATIC_WINDOW:
-            history.popleft()
-        if (len(history) < STATIC_MIN_SAMPLES
-                or timestamp - history[0][0] < STATIC_WINDOW):
-            return None
-        static = history[0][1].copy()
-        for _, past in list(history)[1:]:
+        with self._state_lock:
+            history = self._mask_history
+            if history and history[-1][1].shape != mask.shape:
+                history.clear()             # geometry changed mid-run
+            if not history or timestamp - history[-1][0] >= STATIC_SAMPLE_GAP:
+                history.append((timestamp, mask.copy()))
+            while (len(history) > 2
+                   and timestamp - history[1][0] >= STATIC_WINDOW):
+                history.popleft()
+            if (len(history) < STATIC_MIN_SAMPLES
+                    or timestamp - history[0][0] < STATIC_WINDOW):
+                return None
+            snapshot = [past for _, past in history]
+        static = snapshot[0].copy()
+        for past in snapshot[1:]:
             np.bitwise_and(static, past, out=static)
         return static
 

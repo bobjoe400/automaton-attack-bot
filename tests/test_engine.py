@@ -255,3 +255,16 @@ def test_long_phrases_win_the_tie_at_equal_range():
     word = detection("AXE", 1.0, pos=(300, 300))
     typed, typist, _ = run_engine([[word, phrase]])
     assert typist.typed[0] == "toldyouastormwascoming"
+
+
+def test_process_detections_matches_process():
+    """The pipelined path (detect elsewhere, decide here) must behave
+    identically to the inline path."""
+    settings = Settings()
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(FakeDetector([], settings), typist, settings)
+    words = engine.process_detections(
+        1.0, [detection("BANE", 1.0), detection("PUDGE", 1.0,
+                                                pos=(430, 580))])
+    assert [w.name for w in words] == ["PUDGE", "BANE"]   # urgency order
+    assert typist.typed == ["pudge", "bane"]
