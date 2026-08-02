@@ -1,0 +1,13 @@
+# Hand-maintained vocabulary adjustments. The main corpus is generated from
+# odota/dotaconstants by `automaton update-data`; this file covers what
+# upstream cannot know about:
+#
+#   Word            adds a word seen in the minigame but missing upstream
+#   - Word          excludes an upstream word (retired items steal fuzzy
+#                   matches from live ones)
+#
+# Add words here as the bot logs unmatched reads.
+
+# Retired from the game but still present in dotaconstants:
+- Cornucopia
+- Eternal Shroud
