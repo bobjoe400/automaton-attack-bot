@@ -43,6 +43,12 @@ PLAY_AGAIN_BUTTON = (0.4965, 0.790)          # game-over screen
 TITLE_OCR_THRESHOLD = 120    # modal titles are bright on dark navy
 TITLE_MATCH_CUTOFF = 0.7
 
+# "A round is running" requires every HUD box to be individually lit with
+# this many candidate pixels. The arcade pages leak gold-ish UI text into
+# parts of the HUD area, but only real gameplay lights score, timer AND
+# high-score at once.
+PER_BOX_MIN_PIXELS = 150
+
 START_TITLE_KEY = "AUTOMATONATTACK"
 GAME_OVER_KEY = "GAMEOVER"
 
@@ -153,11 +159,34 @@ class SessionTracker:
         digits = re.search(r"(\d+)\s*$", row.replace(",", "").replace(" ", ""))
         return int(digits.group(1)) if digits else None
 
+    def _hud_visible(self, hsv: np.ndarray) -> bool:
+        """True only when the gameplay HUD -- not lookalike UI -- is up.
+
+        Two conditions, both aimed at the arcade's gold UI text, which can
+        drift into the HUD regions on menu screens:
+
+        * score, timer and high-score must each be lit individually -- gold
+          leakage rarely covers all three fixed rectangles at once;
+        * the combined sample must pass the same plausibility gate as the
+          colour calibration. Gold is far more saturated than the HUD's
+          yellow-green, so it fails the shift bound.
+        """
+        boxes = self.settings.geometry.hud_boxes
+        if any(autocolor.box_candidates(hsv, box) < PER_BOX_MIN_PIXELS
+               for box in boxes):
+            return False
+        anchor = autocolor.measure(hsv, boxes)
+        if anchor is None:
+            return False
+        color = self.settings.color
+        return autocolor.shifted_range(anchor, color.hsv_lo,
+                                       color.hsv_hi) is not None
+
     # -- classification -----------------------------------------------------
     def classify(self, timestamp: float, frame: np.ndarray) -> GameState:
         panel = self._panel(frame)
         hsv = cv2.cvtColor(panel, cv2.COLOR_BGR2HSV)
-        if autocolor.measure(hsv, self.settings.geometry.hud_boxes):
+        if self._hud_visible(hsv):
             return self._advance(timestamp, GameState.PLAYING)
 
         # No HUD: a modal screen, a transition, or not the minigame at all.

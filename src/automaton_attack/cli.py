@@ -414,9 +414,19 @@ def cmd_calibrate(args) -> int:
     settings = settings.for_resolution(width, height)
     detector = Detector(lexicon, backend, settings)
 
+    import cv2 as _cv2
+
+    from . import autocolor
+    from .session import PER_BOX_MIN_PIXELS
+
     mask = detector.word_mask(frame)
     blobs = detector.blobs(mask)
     print(f"\nFrame {width}x{height}; panel {settings.geometry.panel}")
+    hsv_panel = _cv2.cvtColor(detector.crop_panel(frame), _cv2.COLOR_BGR2HSV)
+    counts = [autocolor.box_candidates(hsv_panel, box)
+              for box in settings.geometry.hud_boxes]
+    print(f"HUD boxes (score/timer/high-score) candidate pixels: {counts} "
+          f"(each needs >= {PER_BOX_MIN_PIXELS} to count as 'playing')")
     configured = (settings.color.hsv_lo, settings.color.hsv_hi)
     active = detector.active_range
     if detector.last_anchor:

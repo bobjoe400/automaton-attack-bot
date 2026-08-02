@@ -69,6 +69,58 @@ def test_locate_panel_rejects_a_blank_frame():
     assert locate_panel(np.zeros((1080, 1920, 3), np.uint8)) is None
 
 
+# -- playing-state hardening -------------------------------------------------
+def _paint_boxes(frame, hsv_color, boxes, rng):
+    import cv2
+
+    settings = Settings()
+    x0, y0, _, _ = settings.geometry.panel
+    h, s, v = hsv_color
+    for bx0, by0, bx1, by1 in boxes:
+        shape = (by1 - by0, bx1 - bx0)
+        pixels = np.stack([
+            np.clip(rng.normal(h, 1.5, shape), 0, 179),
+            np.clip(rng.normal(s, 8, shape), 0, 255),
+            np.clip(rng.uniform(v - 60, v + 45, shape), 0, 255),
+        ], axis=-1).astype(np.uint8)
+        frame[y0 + by0:y0 + by1, x0 + bx0:x0 + bx1] = \
+            cv2.cvtColor(pixels, cv2.COLOR_HSV2BGR)
+
+
+def _classify_synthetic(frame):
+    tracker = SessionTracker(backend=None, settings=Settings())
+    return tracker.classify(0.0, frame)
+
+
+def test_gold_menu_text_is_not_playing():
+    """The arcade pages leak saturated gold UI text into the HUD regions;
+    it must fail the colour plausibility gate, not read as a running game.
+    This is a real false positive observed on the start screen."""
+    rng = np.random.default_rng(3)
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    gold = (25, 190, 200)      # far more saturated than the HUD yellow-green
+    _paint_boxes(frame, gold, Settings().geometry.hud_boxes, rng)
+    assert _classify_synthetic(frame) is not GameState.PLAYING
+
+
+def test_one_lit_box_is_not_playing():
+    """Score, timer and high-score are all present in a real round; a single
+    lit rectangle is page furniture, not gameplay."""
+    rng = np.random.default_rng(3)
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    hud = (39, 102, 165)       # genuine HUD colour, but only one box
+    _paint_boxes(frame, hud, Settings().geometry.hud_boxes[:1], rng)
+    assert _classify_synthetic(frame) is not GameState.PLAYING
+
+
+def test_all_boxes_in_hud_colour_is_playing():
+    rng = np.random.default_rng(3)
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    hud = (39, 102, 165)
+    _paint_boxes(frame, hud, Settings().geometry.hud_boxes, rng)
+    assert _classify_synthetic(frame) is GameState.PLAYING
+
+
 # -- full-game clip ----------------------------------------------------------
 pytestmark_clips = pytest.mark.clips
 

@@ -69,7 +69,17 @@ REFERENCE = ColorAnchor(
 )
 
 
-def measure(hsv_panel: np.ndarray, hud_boxes: tuple[Box, ...]) -> ColorAnchor | None:
+def box_candidates(hsv_panel: np.ndarray, box: Box) -> int:
+    """How many pixels in one HUD box fall inside the candidate window."""
+    x0, y0, x1, y1 = box
+    region = hsv_panel[y0:y1, x0:x1]
+    if region.size == 0:
+        return 0
+    return int(np.count_nonzero(cv2.inRange(region, BROAD_LO, BROAD_HI)))
+
+
+def measure(hsv_panel: np.ndarray, hud_boxes: tuple[Box, ...],
+            min_pixels: int = MIN_PIXELS) -> ColorAnchor | None:
     """Sample the HUD boxes of an HSV panel crop. None if there is no HUD."""
     samples = []
     for x0, y0, x1, y1 in hud_boxes:
@@ -81,7 +91,7 @@ def measure(hsv_panel: np.ndarray, hud_boxes: tuple[Box, ...]) -> ColorAnchor | 
     if not samples:
         return None
     pixels = np.concatenate(samples)
-    if len(pixels) < MIN_PIXELS:
+    if len(pixels) < min_pixels:
         return None
     return ColorAnchor(
         hue_median=float(np.median(pixels[:, 0])),
