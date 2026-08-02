@@ -21,6 +21,7 @@ Two things share the words' colour and must not reach OCR:
 
 from __future__ import annotations
 
+import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -79,6 +80,10 @@ class Detector:
         self._calibrated: tuple | None = None   # last good HUD-derived range
         self.last_anchor: autocolor.ColorAnchor | None = None
         self._mask_history: deque[tuple[float, np.ndarray]] = deque()
+        # Two scans may be detected concurrently (pipelined); calibration
+        # and static-history state is shared and must be mutated under a
+        # lock. OCR itself runs unlocked.
+        self._state_lock = threading.Lock()
         # Blobs are OCRed concurrently when the backend can take it (an
         # OcrPool); a busy screen has 6-10 blobs at ~50 ms each.
         workers = getattr(backend, "size", 1)
@@ -108,11 +113,12 @@ class Detector:
             # whatever the display (HDR, night light, LUTs) is doing to it.
             anchor = autocolor.measure(hsv, self.settings.geometry.hud_boxes)
             if anchor:
-                self.last_anchor = anchor
                 calibrated = autocolor.shifted_range(
                     anchor, color.hsv_lo, color.hsv_hi)
-                if calibrated:
-                    self._calibrated = calibrated
+                with self._state_lock:
+                    self.last_anchor = anchor
+                    if calibrated:
+                        self._calibrated = calibrated
         lo, hi = self.active_range
         mask = cv2.inRange(hsv, lo, hi)
         # The score, timer and high-score boxes use the same yellow-green.
@@ -194,18 +200,21 @@ class Detector:
         """Pixels lit continuously across the history window: HUD, not words."""
         if timestamp is None:
             return None
-        history = self._mask_history
-        if history and history[-1][1].shape != mask.shape:
-            history.clear()             # geometry changed mid-run
-        if not history or timestamp - history[-1][0] >= STATIC_SAMPLE_GAP:
-            history.append((timestamp, mask.copy()))
-        while len(history) > 2 and timestamp - history[1][0] >= STATIC_WINDOW:
-            history.popleft()
-        if (len(history) < STATIC_MIN_SAMPLES
-                or timestamp - history[0][0] < STATIC_WINDOW):
-            return None
-        static = history[0][1].copy()
-        for _, past in list(history)[1:]:
+        with self._state_lock:
+            history = self._mask_history
+            if history and history[-1][1].shape != mask.shape:
+                history.clear()             # geometry changed mid-run
+            if not history or timestamp - history[-1][0] >= STATIC_SAMPLE_GAP:
+                history.append((timestamp, mask.copy()))
+            while (len(history) > 2
+                   and timestamp - history[1][0] >= STATIC_WINDOW):
+                history.popleft()
+            if (len(history) < STATIC_MIN_SAMPLES
+                    or timestamp - history[0][0] < STATIC_WINDOW):
+                return None
+            snapshot = [past for _, past in history]
+        static = snapshot[0].copy()
+        for past in snapshot[1:]:
             np.bitwise_and(static, past, out=static)
         return static
 
@@ -226,13 +235,45 @@ class Detector:
         else:
             raws = [self.backend.read(prepare(mask, box)) for box in boxes]
         detections = []
-        for box, raw in zip(boxes, raws):
+        retry_indices = []
+        for index, (box, raw) in enumerate(zip(boxes, raws)):
             match = self.lexicon.match(
                 raw, allow_fallback=not self.settings.safe_mode
             ) if raw else None
             detections.append(Detection(box=box, raw=raw, match=match))
+            if match is None or match.source == "fallback":
+                retry_indices.append(index)
+        # Second chance for glare fragments: explosion glow and spawn
+        # flashes degrade the threshold mask far more than the raw pixels
+        # ('FNU!' where BLITZ KNUCKLES was legible to the eye). Re-OCR the
+        # colour crop for the few unmatched blobs.
+        for index in retry_indices[:3]:
+            box = boxes[index]
+            second = self._read_colour_crop(frame_bgr, box)
+            if not second:
+                continue
+            match = self.lexicon.match(
+                second, allow_fallback=not self.settings.safe_mode)
+            old = detections[index]
+            if match is not None and (old.match is None
+                                      or match.score > old.match.score):
+                detections[index] = Detection(box=box, raw=second,
+                                              match=match)
         detections = self._stitch_wrapped_lines(detections)
         return [d for d in detections if d.match or include_unmatched]
+
+    def _read_colour_crop(self, frame_bgr: np.ndarray,
+                          box: tuple[int, int, int, int]) -> str:
+        bx, by, bw, bh = box
+        x0, y0, _, _ = self.settings.geometry.panel
+        pad = 4
+        crop = frame_bgr[max(0, y0 + by - pad):y0 + by + bh + pad,
+                         max(0, x0 + bx - pad):x0 + bx + bw + pad]
+        if crop.size == 0:
+            return ""
+        upscaled = cv2.resize(crop, None, fx=2, fy=2,
+                              interpolation=cv2.INTER_CUBIC)
+        return self.backend.read(upscaled)
 
     # A wrapped phrase's second line starts within a line-height below the
     # first; a merge is accepted only on a confident corpus match.

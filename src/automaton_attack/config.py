@@ -124,7 +124,10 @@ class Matching:
 class Behaviour:
     """Loop pacing, dedup and keystroke delivery."""
 
-    scan_interval: float = 0.05      # live: seconds between screen grabs
+    scan_interval: float = 0.03      # live: capture-thread pacing. Still
+                                     # >2x the scan rate; a 1440p mss grab
+                                     # costs real CPU, and at 15ms pacing
+                                     # the capture thread burned a core.
     replay_stride: int = 15          # replay: scan every Nth frame (~4/s @60fps)
     # Words drift toward the platform, so a typed word can walk out of a
     # small dedup radius within the TTL and get typed twice -- four words
@@ -133,12 +136,14 @@ class Behaviour:
     # far outside even this radius.
     dedup_radius: int = 260          # px
     # Typing is instant and free, so dedup is only there to stop retyping
-    # within a completion animation. A word still visible ~1s after its
-    # keystrokes did NOT complete (misread, or an identical twin spawn) --
-    # retype it. A long TTL suppressed a second IO near a typed one's
-    # position and it escaped. Live semantics; replay floors this higher
-    # because on tape nothing ever disappears.
-    dedup_ttl: float = 0.9           # seconds
+    # within a completion animation. A word still visible after the TTL did
+    # NOT complete (misread, or an identical twin spawn) -- retype it. A
+    # long TTL suppressed a second IO near a typed one's position and it
+    # escaped; but 0.9s at pipelined sampling caught completed words mid
+    # fade animation and double-typed phrases, so it sits just above the
+    # fade. Live semantics; replay floors this higher because on tape
+    # nothing ever disappears.
+    dedup_ttl: float = 1.2           # seconds
     # Full speed: no artificial inter-key delay. Keyboard bandwidth is the
     # binding constraint in bursts (three phrases at once is ~120 keys in
     # 4s), and we are not pretending to be human -- SendInput overhead is
