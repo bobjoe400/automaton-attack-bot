@@ -7,12 +7,61 @@ needs -- it only measures elapsed time.
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 from typing import Iterator
 
 import cv2
 import numpy as np
+
+DOTA_WINDOW_TITLE = "Dota 2"
+
+
+def _window_rect(title: str) -> tuple[int, int, int, int] | None:
+    """Screen rectangle of a top-level window by exact title (Windows)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    import ctypes.wintypes
+
+    user32 = ctypes.windll.user32
+    hwnd = user32.FindWindowW(None, title)
+    if not hwnd:
+        return None
+    rect = ctypes.wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return rect.left, rect.top, rect.right, rect.bottom
+
+
+def pick_monitor(rect: tuple[int, int, int, int],
+                 monitors: list[dict]) -> int | None:
+    """Index of the monitor overlapping a window rect the most.
+
+    ``monitors`` is mss's list, whose entry 0 is the whole virtual desktop
+    and is skipped.
+    """
+    best, best_overlap = None, 0
+    for index, monitor in enumerate(monitors[1:], start=1):
+        overlap_w = max(0, (min(rect[2], monitor["left"] + monitor["width"])
+                            - max(rect[0], monitor["left"])))
+        overlap_h = max(0, (min(rect[3], monitor["top"] + monitor["height"])
+                            - max(rect[1], monitor["top"])))
+        if overlap_w * overlap_h > best_overlap:
+            best, best_overlap = index, overlap_w * overlap_h
+    return best
+
+
+def find_game_monitor(title: str = DOTA_WINDOW_TITLE) -> int | None:
+    """Monitor index the game window is on, or None if no window found."""
+    rect = _window_rect(title)
+    if rect is None:
+        return None
+    import mss
+
+    with mss.mss() as sct:
+        return pick_monitor(rect, sct.monitors)
 
 
 class VideoSource:

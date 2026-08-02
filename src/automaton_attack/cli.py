@@ -70,16 +70,16 @@ def build_parser() -> argparse.ArgumentParser:
     run = subs.add_parser("run", help="live screen capture")
     run.add_argument("--live", action="store_true",
                      help="actually send keystrokes (default: dry run)")
-    run.add_argument("--monitor", type=int, default=1,
-                     help="mss monitor index (default: 1)")
+    run.add_argument("--monitor", default="auto",
+                     help="monitor to capture: a number, or 'auto' to find "
+                          "the Dota 2 window (default: auto)")
     run.add_argument("--max-wpm", type=float,
                      help="cap typing speed, in words per minute")
-    run.add_argument("--auto-start", action="store_true",
-                     help="click PLAY / PLAY AGAIN when a start or "
+    run.add_argument("--no-auto-start", action="store_true",
+                     help="don't click PLAY / PLAY AGAIN when a start or "
                           "game-over screen is showing")
     run.add_argument("--rounds", type=int, default=1,
-                     help="with --auto-start: rounds to play before "
-                          "exiting (default: 1)")
+                     help="rounds to play before exiting (default: 1)")
     run.add_argument("--keep-running", action="store_true",
                      help="don't exit when the game-over screen appears")
     _add_common(run)
@@ -225,8 +225,12 @@ def _drive(frames, lexicon, backend, settings, typist, *,
     located = False
     rounds_done = 0
     last_click = -1e9
+    first_timestamp = None
+    hinted = False
 
     for timestamp, frame in frames:
+        if first_timestamp is None:
+            first_timestamp = timestamp
         if locate and not located:
             panel = locate_panel(frame)
             if panel:
@@ -243,12 +247,21 @@ def _drive(frames, lexicon, backend, settings, typist, *,
 
         previous = tracker.state
         state = tracker.classify(timestamp, frame)
-        if state is not previous and debug:
+        if state is not previous:
             print(f"[{timestamp:7.2f}s] --- {state.value} ---")
+        if (not tracker.transitions and not hinted
+                and timestamp - first_timestamp > 5.0):
+            hinted = True
+            print("Nothing recognised after 5s -- is the minigame visible "
+                  "on the captured monitor? (--debug shows every OCR read)")
 
         if state is GameState.PLAYING:
             for word in engine.process(timestamp, frame):
                 print(_describe(word))
+            if debug:
+                for d in engine.last_detections:
+                    print(f"    ({d.box[0]:4},{d.box[1]:4}) ocr={d.raw!r} "
+                          f"-> {d.name or '-'} ({d.score:.2f})")
             continue
 
         if state is GameState.GAME_OVER and previous is not GameState.GAME_OVER:
@@ -318,7 +331,7 @@ def cmd_replay(args) -> int:
 
 
 def cmd_run(args) -> int:
-    from .capture import ScreenSource
+    from .capture import ScreenSource, find_game_monitor
     from .keyboard import make_typist
     from .ocr import get_backend
 
@@ -326,19 +339,28 @@ def cmd_run(args) -> int:
     lexicon = _load_lexicon(args, settings)
     backend = get_backend(args.ocr)
 
-    source = ScreenSource(args.monitor, settings.behaviour.scan_interval)
+    monitor = args.monitor
+    if monitor == "auto":
+        found = find_game_monitor()
+        if found:
+            print(f"Dota 2 window found on monitor {found}.")
+        else:
+            print("No Dota 2 window found; capturing the primary monitor "
+                  "(--monitor N to override).")
+        monitor = found or 1
+    source = ScreenSource(int(monitor), settings.behaviour.scan_interval)
     settings = settings.for_resolution(source.width, source.height)
     typist = make_typist(args.live, settings.behaviour)
 
     mode = "TYPING ENABLED" if args.live else "DRY RUN (pass --live to type)"
-    print(f"Live capture on monitor {args.monitor} "
+    print(f"Live capture on monitor {monitor} "
           f"({source.width}x{source.height}), OCR={backend.name}. {mode}. "
           f"Ctrl+C to stop.\n")
     try:
         engine, tracker = _drive(
             source.frames(), lexicon, backend, settings, typist,
             locate=not args.no_locate_panel,
-            auto_start=args.auto_start,
+            auto_start=not args.no_auto_start,
             rounds=args.rounds,
             stop_on_game_over=not args.keep_running,
             debug=args.debug,
@@ -455,8 +477,20 @@ COMMANDS = {
 }
 
 
+def resolve_argv(argv: list[str] | None) -> list[str]:
+    """Bare invocation means an auto-configured run.
+
+    ``uv run automaton`` / ``python -m automaton`` with no arguments behaves
+    like ``automaton run``: find the Dota window, find the panel, watch the
+    session, click PLAY when it shows up -- dry run unless --live is given.
+    """
+    if argv is None:
+        argv = sys.argv[1:]
+    return argv if argv else ["run"]
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    args = build_parser().parse_args(resolve_argv(argv))
     try:
         return COMMANDS[args.command](args)
     except KeyboardInterrupt:

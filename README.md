@@ -30,39 +30,33 @@ from the community projects that maintain it — see
 
 ## Use
 
-Everything is offline and read-only until you pass `--live`.
-
-Replay a recording and see what the bot would have typed — the safest way to
-check a config:
+Everything is auto-configured and nothing touches your keyboard or mouse
+until you pass `--live`. The bare command is a full dry run:
 
 ```bash
-uv run automaton replay clips/clip1.mp4
+uv run automaton
 ```
 
-Watch the live screen without touching the keyboard:
-
-```bash
-uv run automaton run
-```
-
-Actually play:
+(`python -m automaton` works too.) That finds the monitor the Dota 2 window
+is on, finds the minigame panel by its frame, watches the session, and prints
+everything it *would* do — the words it reads, the buttons it would click,
+the final score. When it looks right, let it play:
 
 ```bash
 uv run automaton run --live
 ```
 
-Fully hands-off — clicks PLAY on the start screen, plays a round, reports the
-final score and exits when the game-over screen appears (`--rounds N` to play
-several):
+That clicks PLAY on the start screen, plays a round, reports the final score
+and exits when the game-over screen appears. `--rounds N` plays several
+games; `--no-auto-start` leaves the buttons alone; `--keep-running` ignores
+the game-over screen.
+
+Replay a recording instead of the live screen — the safest way to check a
+config change:
 
 ```bash
-uv run automaton run --live --auto-start
+uv run automaton replay clips/clip1.mp4
 ```
-
-The bot is session-aware: it finds the minigame panel on screen by its frame
-(so the window doesn't have to be at the reference position), recognises the
-start screen, gameplay and the game-over screen, only types while a round is
-actually running, and reads the final score off the results screen.
 
 Other commands:
 

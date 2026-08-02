@@ -173,3 +173,30 @@ def test_engine_counts_what_it_did():
 def test_dry_run_typist_sends_nothing_live():
     typist = DryRunTypist()
     assert typist.live is False
+
+
+# -- monitor picking -------------------------------------------------------
+def test_pick_monitor_prefers_the_overlapping_screen():
+    from automaton_attack.capture import pick_monitor
+
+    monitors = [
+        {"left": 0, "top": 0, "width": 3840, "height": 1080},      # virtual
+        {"left": 0, "top": 0, "width": 1920, "height": 1080},      # primary
+        {"left": 1920, "top": 0, "width": 1920, "height": 1080},   # second
+    ]
+    dota_on_second = (2000, 50, 3800, 1000)
+    assert pick_monitor(dota_on_second, monitors) == 2
+    dota_on_primary = (10, 10, 1900, 1000)
+    assert pick_monitor(dota_on_primary, monitors) == 1
+    straddling_mostly_second = (1500, 0, 3500, 1080)
+    assert pick_monitor(straddling_mostly_second, monitors) == 2
+
+
+def test_pick_monitor_with_no_overlap_returns_none():
+    from automaton_attack.capture import pick_monitor
+
+    monitors = [
+        {"left": 0, "top": 0, "width": 1920, "height": 1080},
+        {"left": 0, "top": 0, "width": 1920, "height": 1080},
+    ]
+    assert pick_monitor((-5000, -5000, -4000, -4000), monitors) is None

@@ -126,13 +126,15 @@ class Engine:
         self.deduper = Deduper(behaviour.dedup_radius, behaviour.dedup_ttl)
         self.confirmer = Confirmer()
         self.stats = Stats()
+        self.last_detections: list[Detection] = []
 
     def process(self, timestamp: float,
                 frame: np.ndarray) -> list[TypedWord]:
         """Scan one frame and type whatever clears both guards."""
-        detections = self.detector.detect(frame)
+        detections = self.detector.detect(frame, include_unmatched=True)
+        self.last_detections = detections
         self.stats.frames += 1
-        self.stats.detections += len(detections)
+        self.stats.detections += sum(1 for d in detections if d.match)
         typed = []
         for detection in detections:
             if not detection.match:
