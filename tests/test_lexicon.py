@@ -176,3 +176,23 @@ def test_digit_lookalikes_still_find_io(vocab_only, raw):
     match = vocab_only.match(raw)
     assert match is not None
     assert match.name == "IO"
+
+
+def test_embedded_words_are_mined_from_merged_reads(vocab_only):
+    """Interleaved clusters OCR as mush that contains component words
+    letter-perfect ('TEMPLAR ASSMANTA STYLE' holds MANTA STYLE)."""
+    hits = vocab_only.embedded_words("TEMPLAR ASSMANTA STYLE",
+                                     exclude_key="TEMPLARASSASSIN")
+    assert "MANTA STYLE" in hits
+
+
+def test_embedded_mining_skips_keys_inside_the_primary_match(vocab_only):
+    """'MONKEY KING' is inside 'MONKEYKINGBAR' -- typing the bar already
+    completes the king, so it must not double-type."""
+    hits = vocab_only.embedded_words(" MONKEY KING BAR",
+                                     exclude_key="MONKEYKINGBAR")
+    assert "MONKEY KING" not in hits
+
+
+def test_short_reads_are_not_mined(vocab_only):
+    assert vocab_only.embedded_words("LUNA") == []

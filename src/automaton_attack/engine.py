@@ -210,11 +210,51 @@ class Engine:
             self.dispatch(word)
             self.stats.record(word)
             typed.append(word)
+        typed.extend(self._type_embedded(timestamp, detections))
         typed.extend(self._insure_weak_matches(timestamp, detections))
         # Update after the loop: a word must survive real time on screen,
         # not be confirmed by its own detection.
         self.confirmer.update(detections, timestamp)
         return typed
+
+    def _type_embedded(self, timestamp: float,
+                       detections: list[Detection]) -> list[TypedWord]:
+        """Mine merged-cluster reads for words embedded letter-perfect.
+
+        Interleaved pile-ups OCR as mush ('TEMPLAR ASSMANTA STYLE'), and
+        the pile-up is exactly where words die unseen -- VISAGE lost a
+        combo with one letter typed inside such a cluster. An exact vocab
+        key inside a long weak read is near-certain to be a real word on
+        screen, so it types immediately; keys inside the primary match's
+        own key complete automatically when the match is typed.
+        """
+        if self.settings.safe_mode:
+            return []
+        lexicon = getattr(self.detector, "lexicon", None)
+        if lexicon is None:
+            return []
+        matching = self.settings.matching
+        out = []
+        for detection in detections:
+            match = detection.match
+            if match and match.score >= matching.strong_match:
+                continue
+            exclude = to_key(match.name) if match else None
+            for name in lexicon.embedded_words(detection.raw,
+                                               exclude_key=exclude):
+                if self.deduper.seen(name, detection.pos):
+                    continue
+                self.deduper.mark(name, detection.pos)
+                embedded = Match(name, 1.0, "vocab")
+                word = TypedWord(timestamp,
+                                 Detection(box=detection.box,
+                                           raw=detection.raw,
+                                           match=embedded),
+                                 embedded.keystrokes)
+                self.dispatch(word)
+                self.stats.record(word)
+                out.append(word)
+        return out
 
     def _insure_weak_matches(self, timestamp: float,
                              detections: list[Detection]) -> list[TypedWord]:

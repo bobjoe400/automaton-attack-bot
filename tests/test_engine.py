@@ -272,3 +272,21 @@ def test_process_detections_matches_process():
                                                 pos=(430, 580))])
     assert [w.name for w in words] == ["PUDGE", "BANE"]   # urgency order
     assert typist.typed == ["pudge", "bane"]
+
+
+def test_embedded_words_type_from_weak_cluster_reads():
+    """VISAGE died with one letter typed inside an interleaved pile-up.
+    A weak merged read containing a vocab key letter-perfect types that
+    word immediately."""
+    from automaton_attack.lexicon import Lexicon
+
+    settings = Settings()
+    detector = FakeDetector([], settings)
+    detector.lexicon = Lexicon(["Templar Assassin", "Manta Style"])
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    weak = detection("TEMPLAR ASSASSIN", 0.69,
+                     raw="TEMPLAR ASSMANTA STYLE")
+    engine.process_detections(0.0, [weak])
+    assert "templarassassin" in typist.typed
+    assert "mantastyle" in typist.typed

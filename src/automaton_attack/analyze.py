@@ -51,11 +51,26 @@ class ReadRecord:
         return self.raws.most_common(1)[0][0]
 
 
+# A word label rendered this far down the panel is a word whose automaton
+# just reached Hoodwink -- words never render there otherwise. Checked
+# offline only: the live loop spends nothing on it.
+PLATFORM_BAND = 0.70
+
+
 class ReadLog:
     """Aggregates detections across a whole recording."""
 
     def __init__(self) -> None:
         self.records: dict[str, ReadRecord] = {}
+        self.strikes: list[tuple[float, int | None, str]] = []
+
+    def add_strike(self, timestamp: float, clock: int | None,
+                   label: str) -> None:
+        # collapse repeats of the same label within a couple of seconds
+        if self.strikes and self.strikes[-1][2] == label \
+                and timestamp - self.strikes[-1][0] < 2.0:
+            return
+        self.strikes.append((timestamp, clock, label))
 
     def add(self, timestamp: float, detection,
             clock: int | None = None) -> None:
@@ -103,6 +118,12 @@ class ReadLog:
 
     def report(self) -> str:
         lines = []
+        if self.strikes:
+            lines.append("Words that reached the platform (combo losses):")
+            for timestamp, clock, label in self.strikes:
+                note = (f" (clock {clock // 60}:{clock % 60:02d})"
+                        if clock is not None else "")
+                lines.append(f"  {label!r:36} at {timestamp:5.1f}s{note}")
         weak = self.weak_matches()
         gaps = self.unmatched()
         def when(r: ReadRecord) -> str:
@@ -126,8 +147,8 @@ class ReadLog:
                     f"  {r.sample_raw!r:36} seen {r.sightings}x at "
                     f"{when(r)}")
         if not lines:
-            return ("No suspicious reads: every stable read matched "
-                    "convincingly.")
+            return ("No suspicious reads and no platform strikes: every "
+                    "stable read matched convincingly.")
         lines.append(
             "\nIf one of these is a real word, add it to "
             "src/automaton_attack/data/custom_vocab.txt (it applies on the "

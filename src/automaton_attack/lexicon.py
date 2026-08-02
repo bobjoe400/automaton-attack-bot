@@ -191,6 +191,29 @@ class Lexicon:
             return None, 0.0
         return self.phrase_names[hit[2]], hit[1] / 100.0
 
+    def embedded_words(self, raw: str,
+                       exclude_key: str | None = None) -> list[str]:
+        """Vocab entries whose key appears verbatim inside a merged read.
+
+        Interleaved word clusters OCR as mush ('TEMPLAR ASSMANTA STYLE'),
+        but the mush often contains component words letter-perfect. An
+        exact >=4-char vocab key inside a long read is near-certain to be
+        a real word on screen; keys already inside ``exclude_key`` (the
+        primary match) complete automatically when it is typed.
+        """
+        key = to_key(raw)
+        if len(key) < 8:
+            return []
+        hits = []
+        for name, entry_key in self.vocab:
+            if not 4 <= len(entry_key) < len(key):
+                continue
+            if exclude_key and entry_key in exclude_key:
+                continue
+            if entry_key in key:
+                hits.append(name)
+        return hits
+
     def match(self, raw: str, allow_fallback: bool = True) -> Match | None:
         """Resolve an OCR read to something typeable, or None.
 

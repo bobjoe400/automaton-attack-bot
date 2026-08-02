@@ -601,9 +601,15 @@ def cmd_analyze(args) -> int:
         if tracker.classify(timestamp, frame) is not GameState.PLAYING:
             continue
         clock = tracker.read_timer(frame)
+        panel_height = settings.geometry.panel_size[1]
         for detection in detector.detect(frame, include_unmatched=True,
                                          timestamp=timestamp):
             log.add(timestamp, detection, clock=clock)
+            bottom = detection.box[1] + detection.box[3]
+            if bottom / panel_height >= 0.70 and (detection.name
+                                                  or detection.raw.strip()):
+                log.add_strike(timestamp, clock,
+                               detection.name or detection.raw.strip())
 
     print()
     print(log.report())
