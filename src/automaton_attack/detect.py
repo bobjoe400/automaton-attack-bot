@@ -32,6 +32,11 @@ import numpy as np
 STATIC_WINDOW = 2.0        # seconds
 STATIC_MIN_SAMPLES = 4
 STATIC_SAMPLE_GAP = 0.2    # don't hoard near-duplicate masks at high fps
+# Suppression applies ONLY to the top band, where HUD labels live (and
+# where mis-anchored geometry once leaked them). A slow word in the play
+# field can sit near-still for seconds -- VOID SPIRIT descended slowly
+# enough to be classified as furniture and died invisible.
+STATIC_BAND_FRACTION = 0.20
 
 from . import autocolor
 from .config import Settings
@@ -211,6 +216,8 @@ class Detector:
         mask = self.word_mask(frame_bgr)
         static = self._static_mask(mask, timestamp)
         if static is not None:
+            band_end = int(mask.shape[0] * STATIC_BAND_FRACTION)
+            static[band_end:, :] = 0    # the play field is never furniture
             mask[static > 0] = 0
         boxes = self.blobs(mask)
         if self._ocr_executor is not None and len(boxes) > 1:

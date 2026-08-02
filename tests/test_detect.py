@@ -45,25 +45,41 @@ def test_sparse_speckle_blob_is_dropped(detector):
     assert detector.blobs(mask) == []
 
 
-def test_static_text_is_suppressed(detector):
-    """Words never stop moving; pixels lit continuously for the whole
-    window are HUD furniture, wherever the geometry put them."""
-    frame = np.zeros((1080, 1920, 3), np.uint8)
-    x0, y0, _, _ = Settings().geometry.panel
-    # paint a text-like block at a fixed position, in the word colour
+def _hud_coloured_block():
     import cv2
 
-    block = cv2.cvtColor(
+    return cv2.cvtColor(
         np.dstack([np.full((22, 120), 41, np.uint8),
                    np.full((22, 120), 95, np.uint8),
                    text_like_roi() // 255 * 180]).astype(np.uint8),
         cv2.COLOR_HSV2BGR)
-    frame[y0 + 500:y0 + 522, x0 + 300:x0 + 420] = block
+
+
+def test_static_text_in_the_top_band_is_suppressed(detector):
+    """HUD labels live in the top band; text sitting still there for the
+    whole window is furniture (this is where mis-anchored geometry once
+    leaked 'HIGH SCORE' as a word)."""
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    x0, y0, _, _ = Settings().geometry.panel
+    frame[y0 + 130:y0 + 152, x0 + 300:x0 + 420] = _hud_coloured_block()
 
     hits = [bool(detector.detect(frame, include_unmatched=True, timestamp=t))
             for t in (0.0, 0.5, 1.0, 1.5, 2.5)]
     assert hits[0] is True          # fresh text is a candidate word
     assert hits[-1] is False        # still there 2.5s later: furniture
+
+
+def test_slow_words_in_the_play_field_are_never_suppressed(detector):
+    """VOID SPIRIT descended slowly enough to sit pixel-still for over two
+    seconds, got classified as furniture, and died invisible. The play
+    field must never be suppressible, however still the word."""
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    x0, y0, _, _ = Settings().geometry.panel
+    frame[y0 + 500:y0 + 522, x0 + 300:x0 + 420] = _hud_coloured_block()
+
+    hits = [bool(detector.detect(frame, include_unmatched=True, timestamp=t))
+            for t in (0.0, 0.5, 1.0, 1.5, 2.5, 4.0)]
+    assert all(hits)
 
 
 def test_moving_text_is_not_suppressed(detector):

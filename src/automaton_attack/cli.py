@@ -409,6 +409,12 @@ def cmd_replay(args) -> int:
 
     source = VideoSource(args.clip, settings.behaviour.replay_stride)
     settings = settings.for_resolution(source.width, source.height)
+    # On tape nothing disappears when typed, so the live short-TTL
+    # retype-if-still-visible rule would spam duplicates; floor it.
+    if settings.behaviour.dedup_ttl < 3.0:
+        data = settings.to_dict()
+        data["behaviour"]["dedup_ttl"] = 3.0
+        settings = Settings.from_dict(data)
     print(f"{Path(args.clip).name}: {source.width}x{source.height} "
           f"@{source.fps:.0f}fps, {source.frame_count} frames; "
           f"OCR={backend.name}, scanning every "
