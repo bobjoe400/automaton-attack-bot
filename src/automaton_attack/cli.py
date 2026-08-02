@@ -1,10 +1,13 @@
 """Command-line interface.
 
+    automaton                     play: find the game, click PLAY, type the
+                                  round, report the score (--dry-run rehearses)
     automaton doctor              check the environment
     automaton replay CLIP         run detection over a recording (never types)
-    automaton run                 watch the screen and play (--dry-run to rehearse)
+    automaton analyze CLIP        report reads that look like misses
     automaton match TEXT          ask the lexicon what a read resolves to
     automaton calibrate           dump mask/blob diagnostics from a frame
+    automaton update-data         rebuild the word corpora from upstream
 """
 
 from __future__ import annotations
@@ -44,11 +47,30 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="automaton",
-        description="Bot for Dota 2's Automaton Attack typing minigame.",
+        description="Bot for Dota 2's Automaton Attack typing minigame. "
+                    "With no subcommand it plays: finds the Dota window and "
+                    "the minigame panel, clicks PLAY, types the round, "
+                    "reports the score and exits.",
     )
     parser.add_argument("--version", action="version",
                         version=f"%(prog)s {__version__}")
-    subs = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print what would be typed/clicked instead of "
+                             "doing it")
+    parser.add_argument("--monitor", default="auto",
+                        help="monitor to capture: a number, or 'auto' to "
+                             "find the Dota 2 window (default: auto)")
+    parser.add_argument("--max-wpm", type=float,
+                        help="cap typing speed, in words per minute")
+    parser.add_argument("--no-auto-start", action="store_true",
+                        help="don't click PLAY / PLAY AGAIN when a start or "
+                             "game-over screen is showing")
+    parser.add_argument("--rounds", type=int, default=1,
+                        help="rounds to play before exiting (default: 1)")
+    parser.add_argument("--keep-running", action="store_true",
+                        help="don't exit when the game-over screen appears")
+    _add_common(parser)
+    subs = parser.add_subparsers(dest="command", required=False)
 
     doctor = subs.add_parser("doctor", help="check dependencies and data files")
     doctor.add_argument("--config", metavar="PATH", help="settings JSON")
@@ -66,26 +88,6 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--stride", type=int,
                         help="scan every Nth frame (default: 15)")
     _add_common(replay)
-
-    run = subs.add_parser("run", help="watch the screen and play")
-    run.add_argument("--dry-run", action="store_true",
-                     help="print what would be typed/clicked instead of "
-                          "doing it")
-    # Old opt-in flag; typing is the default now. Kept so habits don't error.
-    run.add_argument("--live", action="store_true", help=argparse.SUPPRESS)
-    run.add_argument("--monitor", default="auto",
-                     help="monitor to capture: a number, or 'auto' to find "
-                          "the Dota 2 window (default: auto)")
-    run.add_argument("--max-wpm", type=float,
-                     help="cap typing speed, in words per minute")
-    run.add_argument("--no-auto-start", action="store_true",
-                     help="don't click PLAY / PLAY AGAIN when a start or "
-                          "game-over screen is showing")
-    run.add_argument("--rounds", type=int, default=1,
-                     help="rounds to play before exiting (default: 1)")
-    run.add_argument("--keep-running", action="store_true",
-                     help="don't exit when the game-over screen appears")
-    _add_common(run)
 
     analyze = subs.add_parser(
         "analyze",
@@ -608,22 +610,12 @@ COMMANDS = {
 }
 
 
-def resolve_argv(argv: list[str] | None) -> list[str]:
-    """Bare invocation means an auto-configured run.
-
-    ``uv run automaton`` / ``python -m automaton`` with no arguments behaves
-    like ``automaton run``: find the Dota window, find the panel, click PLAY
-    and play the round. ``--dry-run`` rehearses without touching anything.
-    """
-    if argv is None:
-        argv = sys.argv[1:]
-    return argv if argv else ["run"]
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(resolve_argv(argv))
+    args = build_parser().parse_args(argv)
     try:
-        return COMMANDS[args.command](args)
+        # No subcommand means play -- everything run-like lives directly
+        # on `automaton`.
+        return COMMANDS[args.command or "run"](args)
     except KeyboardInterrupt:
         return 130
     except (FileNotFoundError, RuntimeError, ValueError) as exc:

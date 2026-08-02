@@ -46,7 +46,7 @@ To rehearse without touching the keyboard or mouse — everything is printed
 instead of sent:
 
 ```bash
-uv run automaton run --dry-run
+uv run automaton --dry-run
 ```
 
 (A clone without the live extras installed falls back to a dry run on its
@@ -65,7 +65,7 @@ Other commands:
 | --- | --- |
 | `doctor` | Checks dependencies, OCR backends and data files |
 | `replay CLIP` | Runs detection over a recording; never types |
-| `run` | Watch the screen and play; `--dry-run` to rehearse |
+| *(none)* | Play: find the game, click PLAY, type the round; `--dry-run` to rehearse |
 | `match TEXT` | Asks the lexicon what an OCR read resolves to |
 | `calibrate` | Dumps mask/blob diagnostics from one frame |
 | `update-data` | Rebuilds the word corpora from upstream (run after a patch) |
