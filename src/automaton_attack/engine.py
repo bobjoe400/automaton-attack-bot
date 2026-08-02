@@ -1,0 +1,144 @@
+"""The scan/decide/type loop.
+
+Between detecting a word and typing it sit two guards:
+
+* :class:`Confirmer` -- anything not matched with high confidence must be read
+  identically on two consecutive scans. OCR errors vary frame to frame
+  (METEORHAKIMER one scan, METEORHARIMER the next), so an exact repeat is good
+  evidence the read is right. Tesseract's own confidence score is not usable
+  for this -- it returned 0 on a correctly-read long phrase.
+* :class:`Deduper` -- a word already typed near the same spot is not retyped
+  for a few seconds. In live play a completed word disappears, so seeing it
+  again later means keystrokes were dropped or it genuinely respawned; both
+  are cases where retyping is the right move.
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import Callable, Iterable, Iterator
+
+import numpy as np
+
+from .config import Settings
+from .detect import Detection, Detector
+from .keyboard import DryRunTypist
+
+
+@dataclass
+class TypedWord:
+    """A word the engine decided to type."""
+
+    timestamp: float
+    detection: Detection
+    keystrokes: str
+
+    @property
+    def name(self) -> str:
+        return self.detection.name
+
+    @property
+    def source(self) -> str:
+        return self.detection.match.source if self.detection.match else "?"
+
+
+@dataclass
+class Stats:
+    frames: int = 0
+    detections: int = 0
+    typed: int = 0
+    by_source: dict[str, int] = field(default_factory=dict)
+    suppressed_duplicate: int = 0
+    awaiting_confirmation: int = 0
+
+    def record(self, word: TypedWord) -> None:
+        self.typed += 1
+        self.by_source[word.source] = self.by_source.get(word.source, 0) + 1
+
+
+class Deduper:
+    """Suppresses a word recently typed at roughly the same position."""
+
+    def __init__(self, radius: int = 120, ttl: float = 3.0,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.radius = radius
+        self.ttl = ttl
+        self.clock = clock
+        self._entries: list[tuple[str, tuple[int, int], float]] = []
+
+    def seen(self, name: str, pos: tuple[int, int]) -> bool:
+        now = self.clock()
+        self._entries = [e for e in self._entries if now - e[2] < self.ttl]
+        for entry_name, entry_pos, _ in self._entries:
+            if entry_name != name:
+                continue
+            if (abs(entry_pos[0] - pos[0]) < self.radius
+                    and abs(entry_pos[1] - pos[1]) < self.radius):
+                return True
+        return False
+
+    def mark(self, name: str, pos: tuple[int, int]) -> None:
+        self._entries.append((name, pos, self.clock()))
+
+
+class Confirmer:
+    """Holds low-confidence matches back until a scan repeats them."""
+
+    def __init__(self, high_confidence: float = 0.85) -> None:
+        self.high_confidence = high_confidence
+        self.pending: set[str] = set()
+
+    def ready(self, detection: Detection) -> bool:
+        if detection.score >= self.high_confidence:
+            return True
+        return detection.name in self.pending
+
+    def update(self, detections: Iterable[Detection]) -> None:
+        self.pending = {
+            d.name for d in detections
+            if d.name and d.score < self.high_confidence
+        }
+
+
+class Engine:
+    def __init__(self, detector: Detector, typist=None,
+                 settings: Settings | None = None) -> None:
+        self.detector = detector
+        self.settings = settings or detector.settings
+        self.typist = typist or DryRunTypist(self.settings.behaviour)
+        behaviour = self.settings.behaviour
+        self.deduper = Deduper(behaviour.dedup_radius, behaviour.dedup_ttl)
+        self.confirmer = Confirmer(self.settings.matching.high_confidence)
+        self.stats = Stats()
+
+    def process(self, timestamp: float,
+                frame: np.ndarray) -> list[TypedWord]:
+        """Scan one frame and type whatever clears both guards."""
+        detections = self.detector.detect(frame)
+        self.stats.frames += 1
+        self.stats.detections += len(detections)
+        typed = []
+        for detection in detections:
+            if not detection.match:
+                continue
+            if self.deduper.seen(detection.name, detection.pos):
+                self.stats.suppressed_duplicate += 1
+                continue
+            if not self.confirmer.ready(detection):
+                self.stats.awaiting_confirmation += 1
+                continue
+            self.deduper.mark(detection.name, detection.pos)
+            word = TypedWord(timestamp, detection, detection.match.keystrokes)
+            self.typist.type(word.keystrokes)
+            self.stats.record(word)
+            typed.append(word)
+        # Update after the loop: a word must survive a full scan-to-scan gap,
+        # not be confirmed by its own detection.
+        self.confirmer.update(detections)
+        return typed
+
+    def run(self, frames: Iterable[tuple[float, np.ndarray]]
+            ) -> Iterator[TypedWord]:
+        for timestamp, frame in frames:
+            yield from self.process(timestamp, frame)
