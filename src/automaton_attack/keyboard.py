@@ -97,6 +97,13 @@ class TypingWorker(threading.Thread):
     with the time the word spent waiting.
     """
 
+    # Under load, weak guesses lose their seat: keyboard time is the scarce
+    # resource, and a 0.67 match from a fly-in partial usually gets retyped
+    # correctly a scan later anyway. Verbatim/fallback words are exempt --
+    # they are the only shot at out-of-corpus words.
+    TRIAGE_DEPTH = 3
+    TRIAGE_BELOW = 0.75
+
     def __init__(self, typist, urgency: Callable, on_typed: Callable | None = None,
                  stale_after: float = 4.0,
                  clock: Callable[[], float] = time.monotonic) -> None:
@@ -107,6 +114,7 @@ class TypingWorker(threading.Thread):
         self.stale_after = stale_after
         self.clock = clock
         self.dropped_stale = 0
+        self.dropped_triage = 0
         self._pending: list[tuple[object, float]] = []
         self._condition = threading.Condition()
         self._stopped = False
@@ -135,9 +143,22 @@ class TypingWorker(threading.Thread):
             if waited > self.stale_after:
                 self.dropped_stale += 1
                 continue
+            if self._triage(word):
+                self.dropped_triage += 1
+                continue
             self.typist.type(word.keystrokes)
             if self.on_typed:
                 self.on_typed(word, waited)
+
+    def _triage(self, word) -> bool:
+        with self._condition:
+            backlog = len(self._pending)
+        if backlog < self.TRIAGE_DEPTH:
+            return False
+        match = word.detection.match
+        if match is None or match.source == "fallback":
+            return False
+        return match.score < self.TRIAGE_BELOW
 
     def stop(self, timeout: float = 5.0) -> None:
         """Stop immediately; pending words belong to a round that is over."""

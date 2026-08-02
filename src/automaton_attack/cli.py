@@ -271,6 +271,9 @@ def _drive(frames, lexicon, backend, settings, typist, *,
             if worker.dropped_stale:
                 print(f"{worker.dropped_stale} queued word(s) dropped as "
                       f"stale.")
+            if worker.dropped_triage:
+                print(f"{worker.dropped_triage} weak guess(es) skipped "
+                      f"while the keyboard queue was deep.")
 
 
 def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,

@@ -24,6 +24,10 @@ Boots
 Hypothermia
 Ogre Club
 
+# Voice line seen live (typed via fallback 2026-08-01) but absent from the
+# dotabase phrase corpus:
+Omniscient Desiderator
+
 # The game renders these differently from upstream's item names:
 Sange and Yasha and Kaya
 Spirit Bear
