@@ -277,3 +277,22 @@ def test_parse_timer(text, expected):
     from automaton_attack.session import parse_timer
 
     assert parse_timer(text) == expected
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("X3.0", 3.0),
+    ("x1.5", 1.5),
+    ("*2,0", 2.0),      # OCR reads the dot as a comma sometimes
+    ("3.0", 3.0),
+    ("X3O", 3.0),       # dot lost, zero read as O -- still unambiguous
+    ("X15", 1.5),       # decimals are only ever 0 or 5
+    ("XO", None),       # a single digit is not enough
+    ("X17", None),      # not a half-step value
+    ("X8.0", None),     # out of the game's x1.0-x3.0 range ('3' misread)
+    ("SCORE", None),
+    ("", None),
+])
+def test_parse_multiplier(text, expected):
+    from automaton_attack.session import parse_multiplier
+
+    assert parse_multiplier(text) == expected

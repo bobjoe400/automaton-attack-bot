@@ -24,9 +24,20 @@ Boots
 Hypothermia
 Ogre Club
 
-# Voice line seen live (typed via fallback 2026-08-01) but absent from the
-# dotabase phrase corpus:
+# Outworld Destroyer's innate ability shows a random name in the loadout
+# (Liquipedia trivia); Omniscient Desiderator appeared live as a target
+# word, so its five siblings and the default are covered too:
 Omniscient Desiderator
+Obstreperous Dissimilator
+Obnoxious Determinator
+Obsequious Deliberator
+Ornery Deconstructor
+Obnubilated Delineator
+Ominous Discernment
+
+# Voice lines the game renders without the corpus line's leading
+# interjection ("Ha ha ha!" is not shown on screen):
+Women and children and Kunkka first.
 
 # The game renders these differently from upstream's item names:
 Sange and Yasha and Kaya

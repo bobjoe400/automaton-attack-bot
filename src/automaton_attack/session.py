@@ -40,6 +40,7 @@ TITLE_REGION = (0.26, 0.135, 0.74, 0.26)     # covers both modal titles
 # drift once clipped the digits into a phantom '86'.
 SCORE_ROW_REGION = (0.227, 0.263, 0.767, 0.322)
 TIMER_REGION = (0.40, 0.02, 0.585, 0.085)    # the "0:24" above TIME
+MULTIPLIER_REGION = (0.04, 0.102, 0.23, 0.143)  # the "x1.5" under SCORE
 PLAY_BUTTON = (0.4965, 0.857)                # start screen
 PLAY_AGAIN_BUTTON = (0.4965, 0.790)          # game-over screen
 
@@ -71,6 +72,29 @@ def _letters(text: str) -> str:
 # Applied only to the text after the SCORE label, never to words.
 _DIGIT_LOOKALIKES = str.maketrans({"O": "0", "I": "1", "L": "1", "l": "1",
                                    "B": "8", "S": "5", "Z": "2"})
+
+
+def parse_multiplier(text: str) -> float | None:
+    """Combo multiplier from an "x1.5"-style read.
+
+    Multipliers are always digit-dot-digit with the decimal in {0, 5}, so
+    a read that lost its separator ('X3O' for x3.0 -- note the 0 read as
+    O) is still unambiguous once lookalikes are translated.
+    """
+    text = text.upper().translate(_DIGIT_LOOKALIKES)
+    value = None
+    match = re.search(r"(\d)\s?[.,]\s?(\d)", text)
+    if match:
+        value = float(f"{match.group(1)}.{match.group(2)}")
+    else:
+        digits = [c for c in text if c.isdigit()]
+        if len(digits) == 2:
+            value = float(f"{digits[0]}.{digits[1]}")
+    # The game's multipliers run x1.0-x3.0 in half steps; anything else is
+    # a misread ('3' has come back as '8', 'SCORE' as '5C0RE').
+    if value is None or value * 2 != int(value * 2) or not 1.0 <= value <= 3.0:
+        return None
+    return value
 
 
 def parse_timer(text: str) -> int | None:
@@ -280,6 +304,28 @@ class SessionTracker:
             return int(digits)
         row = self._read_bright_text(region)
         return parse_score(row)
+
+    def read_multiplier(self, frame: np.ndarray) -> float | None:
+        """The combo multiplier under the score, or None when unreadable.
+
+        Logged during play so a combo loss is findable in the log (and the
+        footage) without OCRing the whole recording after the fact. The
+        glyphs are small, so this read uses a lower threshold and a larger
+        upscale than the modal-title path.
+        """
+        region = self._region(self._panel(frame), MULTIPLIER_REGION)
+        if region.size == 0 or self.backend is None:
+            return None
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(gray, 110, 255, cv2.THRESH_BINARY)
+        if int(mask.sum()) // 255 < 20:
+            return None
+        upscaled = cv2.resize(255 - mask, None, fx=3, fy=3,
+                              interpolation=cv2.INTER_CUBIC)
+        # A white margin helps the recogniser on tiny glyph strips.
+        upscaled = cv2.copyMakeBorder(upscaled, 12, 12, 12, 12,
+                                      cv2.BORDER_CONSTANT, value=255)
+        return parse_multiplier(self.backend.read(upscaled))
 
     def read_timer(self, frame: np.ndarray) -> int | None:
         """Seconds left on the round clock, or None when unreadable.

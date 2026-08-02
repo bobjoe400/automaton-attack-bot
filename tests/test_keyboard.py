@@ -16,10 +16,13 @@ def word(name, pos, timestamp=0.0):
 
 
 def urgency(detection):
-    settings = Settings()
-    return Engine._urgency(
-        type("E", (), {"settings": settings, "PLATFORM": Engine.PLATFORM})(),
-        detection)
+    class _StubDetector:
+        settings = Settings()
+
+        def detect(self, *args, **kwargs):
+            return []
+
+    return Engine(_StubDetector(), settings=Settings())._urgency(detection)
 
 
 def drain(worker, expected, timeout=3.0):

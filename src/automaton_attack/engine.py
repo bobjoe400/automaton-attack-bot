@@ -139,13 +139,27 @@ class Engine:
     # automaton reaches this point, so distance to it is time-to-live.
     # Spawns from below start close and are urgent immediately.
     PLATFORM = (0.5, 0.66)
+    # Rough conversion factors for the deadline estimate: automatons cross
+    # about half the panel in a ~4s word lifetime, and a keystroke costs
+    # ~22ms with jitter.
+    APPROACH_SPEED = 0.12       # panel-fractions per second
+    SECONDS_PER_KEY = 0.022
 
     def _urgency(self, detection: Detection) -> float:
+        """Smaller = must start typing sooner.
+
+        Deadline minus service time, not bare distance: a 30-key voice
+        line needs ~0.7s of keyboard before it completes, so it must
+        start earlier than a 4-key word at the same range. Two phrases
+        died this exact way -- queued behind each other while both fell.
+        """
         panel_w, panel_h = self.settings.geometry.panel_size
         bx, by, bw, bh = detection.box
         dx = (bx + bw / 2) / panel_w - self.PLATFORM[0]
         dy = (by + bh / 2) / panel_h - self.PLATFORM[1]
-        return dx * dx + dy * dy
+        deadline = (dx * dx + dy * dy) ** 0.5 / self.APPROACH_SPEED
+        keys = len(detection.match.keystrokes) if detection.match else 0
+        return deadline - keys * self.SECONDS_PER_KEY
 
     def process(self, timestamp: float,
                 frame: np.ndarray) -> list[TypedWord]:

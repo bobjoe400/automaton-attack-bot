@@ -243,3 +243,14 @@ def test_short_weak_reads_get_no_insurance():
     weak = detection("CLOAK", 0.80, raw="CIOAK")
     typed, typist, _ = run_engine([[weak], [weak]])
     assert typist.typed == ["cloak"]
+
+
+def test_long_phrases_start_before_equally_close_short_words():
+    """Urgency is deadline MINUS service time: a 30-key voice line needs
+    ~0.7s of keyboard, so it outranks a 4-key word at similar range. Two
+    phrases died queued behind each other to teach us this."""
+    phrase = detection("TOLD YOU A STORM WAS COMING!", 1.0, pos=(300, 300),
+                       source="phrase")
+    word = detection("AXE", 1.0, pos=(310, 310))
+    typed, typist, _ = run_engine([[word, phrase]])
+    assert typist.typed[0] == "toldyouastormwascoming"

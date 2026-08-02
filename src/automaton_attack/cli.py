@@ -284,6 +284,8 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
 
     (proven, rounds_done, last_click, first_timestamp,
      hinted, seen_playing, game_over_at, score_reported) = state_vars
+    last_multiplier = None
+    last_multiplier_read = -1e9
 
     for timestamp, frame in frames:
         if first_timestamp is None:
@@ -317,6 +319,24 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
 
         if state is GameState.PLAYING:
             seen_playing = True
+            # Log the combo so a loss is findable in the log (and footage)
+            # without a post-hoc OCR scrub of the whole recording.
+            if timestamp - last_multiplier_read >= 0.5:
+                last_multiplier_read = timestamp
+                multiplier = tracker.read_multiplier(frame)
+                if multiplier is not None and multiplier != last_multiplier:
+                    clock = tracker.read_timer(frame)
+                    clock_note = (f", clock {clock // 60}:{clock % 60:02d}"
+                                  if clock is not None else "")
+                    if (last_multiplier is not None
+                            and multiplier < last_multiplier):
+                        print(f"[{timestamp:7.2f}s] !!! COMBO LOST "
+                              f"x{last_multiplier} -> x{multiplier}"
+                              f"{clock_note}")
+                    else:
+                        print(f"[{timestamp:7.2f}s] combo x{multiplier}"
+                              f"{clock_note}")
+                    last_multiplier = multiplier
             for word in engine.process(timestamp, frame):
                 if worker is None:      # threaded mode prints at type time
                     print(_describe(word))
