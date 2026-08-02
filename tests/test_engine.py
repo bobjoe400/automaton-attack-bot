@@ -208,13 +208,14 @@ def test_pick_monitor_with_no_overlap_returns_none():
 
 def test_words_nearest_the_platform_type_first():
     """Automatons converge on Hoodwink at panel-centre; the word about to
-    reach her must not wait behind a fresh spawn. Spawns from the bottom
-    start close to the platform, so this covers them too."""
+    reach her must not wait behind a fresh spawn. Spawns from below start
+    close to the platform (but above the strike band -- anything below
+    that is already dead)."""
     far_top = detection("BANE", 1.0, pos=(60, 40))
     near_platform = detection("PUDGE", 1.0, pos=(430, 580))
-    bottom_spawn = detection("LINA", 1.0, pos=(450, 900))
-    typed, typist, _ = run_engine([[far_top, near_platform, bottom_spawn]])
-    assert typist.typed == ["pudge", "lina", "bane"]
+    below_spawn = detection("LINA", 1.0, pos=(450, 620))
+    typed, typist, _ = run_engine([[far_top, near_platform, below_spawn]])
+    assert typist.typed == ["lina", "pudge", "bane"]
 
 
 # -- verbatim insurance ------------------------------------------------------
@@ -290,3 +291,13 @@ def test_embedded_words_type_from_weak_cluster_reads():
     engine.process_detections(0.0, [weak])
     assert "templarassassin" in typist.typed
     assert "mantastyle" in typist.typed
+
+
+def test_strike_band_corpses_are_never_typed():
+    """A label below 70% panel height is a word that already struck --
+    the game's kill display. KAYA's corpse got typed at top queue
+    priority and starved living words right after a strike."""
+    corpse = detection("KAYA", 1.0, pos=(524, 819))
+    living = detection("TANGO", 1.0, pos=(461, 600))
+    typed, typist, _ = run_engine([[corpse, living]])
+    assert typist.typed == ["tango"]

@@ -150,6 +150,13 @@ class Engine:
     # automaton reaches this point, so distance to it is time-to-live.
     # Spawns from below start close and are urgent immediately.
     PLATFORM = (0.5, 0.66)
+    # A label rendered below this is a word that ALREADY struck -- the
+    # game shows the killer at the platform for a moment. Typing it is
+    # pure waste, and because it is the closest thing to the platform it
+    # used to hijack the top of the urgency queue right after every
+    # strike, starving living words exactly when the combo was rebuilding.
+    # (Matches analyze.PLATFORM_BAND.)
+    STRIKE_BAND = 0.70
     # Rough conversion factors for the deadline estimate: automatons cross
     # about half the panel in a ~4s word lifetime, and a keystroke costs
     # ~22ms with jitter.
@@ -191,6 +198,11 @@ class Engine:
         behind a keystroke burst drops a little further while it waits, so
         the word about to die must not wait behind a fresh spawn.
         """
+        panel_h = self.settings.geometry.panel_size[1]
+        detections = [
+            d for d in detections
+            if (d.box[1] + d.box[3]) / panel_h < self.STRIKE_BAND
+        ]
         detections.sort(key=self._urgency)
         self.last_detections = detections
         self.stats.frames += 1
