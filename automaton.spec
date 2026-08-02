@@ -4,6 +4,10 @@
 # temp on each launch (~2s measured) -- paid once per session, and worth it
 # for a one-file download. tkinter rides along for the control panel, which
 # is what a bare double-click opens.
+#
+# Windowed (console=False): double-clicking must not spawn a terminal.
+# packaging/entry.py re-attaches to the parent console when launched from
+# one, so CLI usage still prints where it was typed.
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
@@ -29,5 +33,5 @@ exe = EXE(
     a.binaries,
     a.datas,
     name="automaton",
-    console=True,
+    console=False,
 )

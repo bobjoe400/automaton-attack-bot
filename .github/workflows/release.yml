@@ -31,10 +31,15 @@ jobs:
           uv sync --extra live
           uv run pyinstaller automaton.spec --noconfirm
 
+      # The exe is a windowed app: a shell won't wait for it or see its
+      # console-attached output, so wait explicitly and assert exit codes.
+      # `match` still exercises the full corpus download on a clean runner.
       - name: Smoke test
         run: |
-          dist/automaton.exe --version
-          dist/automaton.exe match "PUDGE"
+          $v = Start-Process -FilePath dist/automaton.exe -ArgumentList '--version' -Wait -PassThru
+          if ($v.ExitCode -ne 0) { throw "--version exited $($v.ExitCode)" }
+          $m = Start-Process -FilePath dist/automaton.exe -ArgumentList 'match','PUDGE' -Wait -PassThru
+          if ($m.ExitCode -ne 0) { throw "match exited $($m.ExitCode)" }
 
       - name: Checksum
         run: |
