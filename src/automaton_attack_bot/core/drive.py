@@ -19,9 +19,9 @@ def drive(frames, lexicon, backend, settings, typist, *,
     and re-anchors geometry when the panel is found away from its configured
     position.
     """
-    from .core.detect import Detector
-    from .core.engine import Engine
-    from .core.session import GameState, SessionTracker, locate_panel
+    from .detect import Detector
+    from .engine import Engine
+    from .session import GameState, SessionTracker, locate_panel
 
     detector = Detector(lexicon, backend, settings)
     engine = Engine(detector, typist, settings)
@@ -31,7 +31,7 @@ def drive(frames, lexicon, backend, settings, typist, *,
     if threaded:
         from concurrent.futures import ThreadPoolExecutor
 
-        from .core.keyboard import TypingWorker
+        from .keyboard import TypingWorker
 
         def emit(word, waited):
             LOG.trace(describe(word) + f"  [queued {waited:.2f}s]")
@@ -83,8 +83,8 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                 stop_on_game_over, debug, state_vars):
     from collections import deque
 
-    from .core.detect import Detector
-    from .core.session import GameState, SessionTracker, locate_panel
+    from .detect import Detector
+    from .session import GameState, SessionTracker, locate_panel
 
     (proven, rounds_done, last_click, first_timestamp,
      hinted, seen_playing, game_over_at, score_reported) = state_vars
