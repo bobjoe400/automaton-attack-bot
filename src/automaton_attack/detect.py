@@ -7,14 +7,30 @@ Only the small yellow-green target text is detected. Each word also renders a
 second time as a larger desaturated-white "input tracker" that highlights the
 next letter you owe -- useful for a human, redundant for us, and deliberately
 outside the HSV range.
+
+Two things share the words' colour and must not reach OCR:
+
+* the automatons themselves -- gold bodies leaking sparse speckle through the
+  mask; filtered by fill density (see Blobs.min_fill);
+* HUD text -- masked by the configured boxes, and additionally by *static
+  suppression*: any pixel lit continuously for a couple of seconds is
+  interface furniture, because words never stop moving. This catches HUD
+  text wherever it is, even when the geometry is imperfect (a mis-located
+  panel once had the bot typing 'HIGH SCORE' every three seconds).
 """
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
+
+# Static suppression: a pixel lit in every sample across this span is HUD.
+STATIC_WINDOW = 2.0        # seconds
+STATIC_MIN_SAMPLES = 4
+STATIC_SAMPLE_GAP = 0.2    # don't hoard near-duplicate masks at high fps
 
 from . import autocolor
 from .config import Settings
@@ -56,6 +72,7 @@ class Detector:
         self._kernel = np.ones(self.settings.blobs.dilate_kernel, np.uint8)
         self._calibrated: tuple | None = None   # last good HUD-derived range
         self.last_anchor: autocolor.ColorAnchor | None = None
+        self._mask_history: deque[tuple[float, np.ndarray]] = deque()
 
     @property
     def active_range(self) -> tuple:
@@ -103,13 +120,42 @@ class Detector:
                 continue
             if not blobs.min_height < bh < blobs.max_height:
                 continue
+            # Sparse speckle (automaton bodies) is not text; every one of
+            # these that reaches OCR costs ~50 ms of scan latency.
+            roi = mask[by:by + bh, bx:bx + bw]
+            if roi.mean() / 255.0 < blobs.min_fill:
+                continue
             boxes.append((int(bx), int(by), int(bw), int(bh)))
         return boxes
 
+    def _static_mask(self, mask: np.ndarray,
+                     timestamp: float | None) -> np.ndarray | None:
+        """Pixels lit continuously across the history window: HUD, not words."""
+        if timestamp is None:
+            return None
+        history = self._mask_history
+        if history and history[-1][1].shape != mask.shape:
+            history.clear()             # geometry changed mid-run
+        if not history or timestamp - history[-1][0] >= STATIC_SAMPLE_GAP:
+            history.append((timestamp, mask.copy()))
+        while len(history) > 2 and timestamp - history[1][0] >= STATIC_WINDOW:
+            history.popleft()
+        if (len(history) < STATIC_MIN_SAMPLES
+                or timestamp - history[0][0] < STATIC_WINDOW):
+            return None
+        static = history[0][1].copy()
+        for _, past in list(history)[1:]:
+            np.bitwise_and(static, past, out=static)
+        return static
+
     # -- full pass -------------------------------------------------------
     def detect(self, frame_bgr: np.ndarray,
-               include_unmatched: bool = False) -> list[Detection]:
+               include_unmatched: bool = False,
+               timestamp: float | None = None) -> list[Detection]:
         mask = self.word_mask(frame_bgr)
+        static = self._static_mask(mask, timestamp)
+        if static is not None:
+            mask[static > 0] = 0
         results = []
         for box in self.blobs(mask):
             raw = self.backend.read(prepare(mask, box))

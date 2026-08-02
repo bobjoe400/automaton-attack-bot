@@ -99,30 +99,84 @@ def _fuzzy_contains(text: str, key: str) -> bool:
 # ---------------------------------------------------------------------------
 # Panel auto-location
 # ---------------------------------------------------------------------------
+EDGE_GRADIENT = 40      # per-pixel gradient that counts as "an edge here"
+MIN_SIDE_COVER = 0.45   # each side must be an edge along >=45% of ITS length
+CANDIDATES_PER_SIDE = 6
+
+
+def _edge_line_candidates(profile: np.ndarray, start: int, stop: int,
+                          min_cover: float = 0.2) -> list[int]:
+    """Strongest sustained-edge positions in a range, deduplicated.
+
+    The border line is a few pixels wide, so both of its flanks peak;
+    positions within 10 px keep only the strongest.
+    """
+    order = np.argsort(profile[start:stop])[::-1][:CANDIDATES_PER_SIDE * 3]
+    picked: list[int] = []
+    for offset in order:
+        index = int(offset) + start
+        if profile[index] < min_cover:
+            break
+        if all(abs(index - p) > 10 for p in picked):
+            picked.append(index)
+        if len(picked) >= CANDIDATES_PER_SIDE:
+            break
+    return picked
+
+
 def locate_panel(frame_bgr: np.ndarray) -> tuple[int, int, int, int] | None:
     """Find the minigame frame by its border edges. None if implausible.
 
-    The panel is a near-square bright frame filling most of the screen
-    height on an otherwise dark page, so the strongest vertical edge in each
-    horizontal half and the strongest horizontal edge in each vertical half
-    are its four sides.
+    Candidate edge lines are combined into rectangles and each rectangle is
+    scored by how continuous its four sides are *within its own bounds* --
+    a real frame has four mutually-consistent sides, while a bright modal
+    edge, HUD text or an FPS counter is strong in one direction only.
+    (Full-screen argmax once mis-anchored the geometry badly enough that
+    the HUD's own labels were typed as words.)
     """
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     height, width = gray.shape
-    col_edges = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)).sum(axis=0)
-    row_edges = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)).sum(axis=1)
+    edges_v = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)) > EDGE_GRADIENT
+    edges_h = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)) > EDGE_GRADIENT
 
-    x0 = int(np.argmax(col_edges[: width // 2]))
-    x1 = int(np.argmax(col_edges[width // 2:])) + width // 2
-    y0 = int(np.argmax(row_edges[: height // 2]))
-    y1 = int(np.argmax(row_edges[height // 2:])) + height // 2
+    col_cover = edges_v.mean(axis=0)
+    row_cover = edges_h.mean(axis=1)
+    lefts = _edge_line_candidates(col_cover, 0, width // 2)
+    rights = _edge_line_candidates(col_cover, width // 2, width)
+    tops = _edge_line_candidates(row_cover, 0, height // 2)
+    bottoms = _edge_line_candidates(row_cover, height // 2, height)
 
-    panel_w, panel_h = x1 - x0, y1 - y0
-    if panel_h < 0.5 * height:            # too small to be the minigame
-        return None
-    if not 0.85 <= panel_w / panel_h <= 1.15:   # the panel is near-square
-        return None
-    return x0, y0, x1, y1
+    def side_cover(edge_map, fixed, lo, hi, vertical):
+        window = slice(max(0, fixed - 2), fixed + 3)
+        if vertical:
+            return edge_map[lo:hi, window].max(axis=1).mean()
+        return edge_map[window, lo:hi].max(axis=0).mean()
+
+    best_score, best_rect = 0.0, None
+    for x0 in lefts:
+        for x1 in rights:
+            panel_w = x1 - x0
+            if panel_w < 0.3 * width:
+                continue
+            for y0 in tops:
+                for y1 in bottoms:
+                    panel_h = y1 - y0
+                    if panel_h < 0.5 * height:
+                        continue
+                    if not 0.85 <= panel_w / panel_h <= 1.15:
+                        continue
+                    sides = (
+                        side_cover(edges_v, x0, y0, y1, vertical=True),
+                        side_cover(edges_v, x1, y0, y1, vertical=True),
+                        side_cover(edges_h, y0, x0, x1, vertical=False),
+                        side_cover(edges_h, y1, x0, x1, vertical=False),
+                    )
+                    if min(sides) < MIN_SIDE_COVER:
+                        continue
+                    score = sum(sides)
+                    if score > best_score:
+                        best_score, best_rect = score, (x0, y0, x1, y1)
+    return best_rect
 
 
 # ---------------------------------------------------------------------------
@@ -225,12 +279,16 @@ class SessionTracker:
         title = _letters(self._read_bright_text(
             self._region(panel, TITLE_REGION)))
         if _fuzzy_contains(title, GAME_OVER_KEY):
-            score = self.read_final_score(frame)
-            self.score_settled = (score is not None
-                                  and score == self._last_score_read)
-            self._last_score_read = score
-            if score is not None:
-                self.final_score = score
+            # Read until two consecutive reads agree, then FREEZE: later
+            # frames can misread (a lost leading digit turned 5685 into
+            # 685 after the fact) and must not overwrite a settled value.
+            if not self.score_settled:
+                score = self.read_final_score(frame)
+                self.score_settled = (score is not None
+                                      and score == self._last_score_read)
+                self._last_score_read = score
+                if score is not None:
+                    self.final_score = score
             return self._advance(timestamp, GameState.GAME_OVER)
         if _fuzzy_contains(title, START_TITLE_KEY):
             return self._advance(timestamp, GameState.START_SCREEN)

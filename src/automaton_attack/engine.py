@@ -128,10 +128,29 @@ class Engine:
         self.stats = Stats()
         self.last_detections: list[Detection] = []
 
+    # Where Hoodwink stands, in panel fractions: words die when their
+    # automaton reaches this point, so distance to it is time-to-live.
+    # Spawns from below start close and are urgent immediately.
+    PLATFORM = (0.5, 0.66)
+
+    def _urgency(self, detection: Detection) -> float:
+        panel_w, panel_h = self.settings.geometry.panel_size
+        bx, by, bw, bh = detection.box
+        dx = (bx + bw / 2) / panel_w - self.PLATFORM[0]
+        dy = (by + bh / 2) / panel_h - self.PLATFORM[1]
+        return dx * dx + dy * dy
+
     def process(self, timestamp: float,
                 frame: np.ndarray) -> list[TypedWord]:
-        """Scan one frame and type whatever clears both guards."""
-        detections = self.detector.detect(frame, include_unmatched=True)
+        """Scan one frame and type whatever clears both guards.
+
+        Words closest to the platform are typed first: everything queued
+        behind a keystroke burst drops a little further while it waits, so
+        the word about to die must not wait behind a fresh spawn.
+        """
+        detections = self.detector.detect(frame, include_unmatched=True,
+                                          timestamp=timestamp)
+        detections.sort(key=self._urgency)
         self.last_detections = detections
         self.stats.frames += 1
         self.stats.detections += sum(1 for d in detections if d.match)

@@ -94,10 +94,10 @@ class FakeDetector:
         self.settings = settings or Settings()
         self._index = 0
 
-    def detect(self, frame, include_unmatched=False):
+    def detect(self, frame, include_unmatched=False, timestamp=None):
         if self._index >= len(self._frames):
             return []
-        result = self._frames[self._index]
+        result = list(self._frames[self._index])
         self._index += 1
         return result
 
@@ -200,3 +200,14 @@ def test_pick_monitor_with_no_overlap_returns_none():
         {"left": 0, "top": 0, "width": 1920, "height": 1080},
     ]
     assert pick_monitor((-5000, -5000, -4000, -4000), monitors) is None
+
+
+def test_words_nearest_the_platform_type_first():
+    """Automatons converge on Hoodwink at panel-centre; the word about to
+    reach her must not wait behind a fresh spawn. Spawns from the bottom
+    start close to the platform, so this covers them too."""
+    far_top = detection("BANE", 1.0, pos=(60, 40))
+    near_platform = detection("PUDGE", 1.0, pos=(430, 580))
+    bottom_spawn = detection("LINA", 1.0, pos=(450, 900))
+    typed, typist, _ = run_engine([[far_top, near_platform, bottom_spawn]])
+    assert typist.typed == ["pudge", "lina", "bane"]

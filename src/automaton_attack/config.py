@@ -75,6 +75,10 @@ class Blobs:
     min_width: int = 50
     min_height: int = 12
     max_height: int = 45
+    # Fraction of lit pixels inside a blob's box (pre-dilation). Text sits
+    # at 0.13-0.20; the automatons' gold bodies leak sparse speckle at
+    # <=0.08 and every one costs an OCR call (~50 ms). Scale-invariant.
+    min_fill: float = 0.10
 
 
 @dataclass(frozen=True)
