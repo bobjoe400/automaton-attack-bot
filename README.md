@@ -30,26 +30,27 @@ from the community projects that maintain it — see
 
 ## Use
 
-Everything is auto-configured and nothing touches your keyboard or mouse
-until you pass `--live`. The bare command is a full dry run:
+The bare command plays a round, start to finish:
 
 ```bash
 uv run automaton
 ```
 
-(`python -m automaton` works too.) That finds the monitor the Dota 2 window
-is on, finds the minigame panel by its frame, watches the session, and prints
-everything it *would* do — the words it reads, the buttons it would click,
-the final score. When it looks right, let it play:
+(`python -m automaton` works too.) It finds the monitor the Dota 2 window is
+on, finds the minigame panel by its frame, clicks PLAY, types the round,
+reports the final score and exits at the game-over screen. `--rounds N`
+plays several games; `--no-auto-start` leaves the buttons alone;
+`--keep-running` ignores the game-over screen.
+
+To rehearse without touching the keyboard or mouse — everything is printed
+instead of sent:
 
 ```bash
-uv run automaton run --live
+uv run automaton run --dry-run
 ```
 
-That clicks PLAY on the start screen, plays a round, reports the final score
-and exits when the game-over screen appears. `--rounds N` plays several
-games; `--no-auto-start` leaves the buttons alone; `--keep-running` ignores
-the game-over screen.
+(A clone without the live extras installed falls back to a dry run on its
+own.)
 
 Replay a recording instead of the live screen — the safest way to check a
 config change:

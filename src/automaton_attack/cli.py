@@ -67,9 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="scan every Nth frame (default: 15)")
     _add_common(replay)
 
-    run = subs.add_parser("run", help="live screen capture")
-    run.add_argument("--live", action="store_true",
-                     help="actually send keystrokes (default: dry run)")
+    run = subs.add_parser("run", help="watch the screen and play")
+    run.add_argument("--dry-run", action="store_true",
+                     help="print what would be typed/clicked instead of "
+                          "doing it")
+    # Old opt-in flag; typing is the default now. Kept so habits don't error.
+    run.add_argument("--live", action="store_true", help=argparse.SUPPRESS)
     run.add_argument("--monitor", default="auto",
                      help="monitor to capture: a number, or 'auto' to find "
                           "the Dota 2 window (default: auto)")
@@ -415,9 +418,20 @@ def cmd_run(args) -> int:
         monitor = found or 1
     source = ScreenSource(int(monitor), settings.behaviour.scan_interval)
     settings = settings.for_resolution(source.width, source.height)
-    typist = make_typist(args.live, settings.behaviour)
+    live = not args.dry_run
+    if live:
+        try:
+            typist = make_typist(True, settings.behaviour)
+        except RuntimeError as exc:
+            # A clone without the live extras still gets a useful run.
+            print(f"note: {exc}")
+            print("Falling back to a dry run.")
+            live = False
+    if not live:
+        typist = make_typist(False, settings.behaviour)
 
-    mode = "TYPING ENABLED" if args.live else "DRY RUN (pass --live to type)"
+    mode = ("TYPING ENABLED (--dry-run to rehearse)" if live
+            else "DRY RUN (no keys or clicks will be sent)")
     print(f"Live capture on monitor {monitor} "
           f"({source.width}x{source.height}), OCR={backend.name}. {mode}. "
           f"Ctrl+C to stop.\n")
@@ -598,8 +612,8 @@ def resolve_argv(argv: list[str] | None) -> list[str]:
     """Bare invocation means an auto-configured run.
 
     ``uv run automaton`` / ``python -m automaton`` with no arguments behaves
-    like ``automaton run``: find the Dota window, find the panel, watch the
-    session, click PLAY when it shows up -- dry run unless --live is given.
+    like ``automaton run``: find the Dota window, find the panel, click PLAY
+    and play the round. ``--dry-run`` rehearses without touching anything.
     """
     if argv is None:
         argv = sys.argv[1:]
