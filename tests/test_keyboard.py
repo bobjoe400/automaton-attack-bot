@@ -134,3 +134,22 @@ def test_weak_guesses_type_when_the_queue_is_shallow():
     drain(worker, 1)
     worker.stop()
     assert typist.typed == ["rot"]
+
+
+def test_clicks_translate_frame_coords_to_the_capture_monitor():
+    """Frames are monitor-relative, clicks are virtual-screen absolute; on
+    a non-primary monitor the difference sent PLAY clicks to the wrong
+    screen entirely."""
+    from automaton_attack_bot.core.keyboard import DryRunTypist
+
+    typist = DryRunTypist(origin=(2560, -180))
+    typist.click(965, 979)
+    assert typist.clicked == [(3525, 799)]
+
+
+def test_default_origin_leaves_clicks_untouched():
+    from automaton_attack_bot.core.keyboard import DryRunTypist
+
+    typist = DryRunTypist()
+    typist.click(965, 979)
+    assert typist.clicked == [(965, 979)]

@@ -27,8 +27,10 @@ class DryRunTypist:
 
     live = False
 
-    def __init__(self, behaviour: Behaviour | None = None) -> None:
+    def __init__(self, behaviour: Behaviour | None = None,
+                 origin: tuple[int, int] = (0, 0)) -> None:
         self.behaviour = behaviour or Behaviour()
+        self.origin = origin
         self.typed: list[str] = []
         self.clicked: list[tuple[int, int]] = []
 
@@ -36,7 +38,11 @@ class DryRunTypist:
         self.typed.append(text)
 
     def click(self, x: int, y: int) -> None:
-        self.clicked.append((x, y))
+        """x, y are frame (captured-monitor) coordinates; the click goes
+        to virtual-screen absolute. On a non-primary monitor the two
+        differ by the monitor's origin -- clicks used to land on the
+        wrong monitor entirely."""
+        self.clicked.append((x + self.origin[0], y + self.origin[1]))
 
 
 class DirectInputTypist:
@@ -44,7 +50,8 @@ class DirectInputTypist:
 
     live = True
 
-    def __init__(self, behaviour: Behaviour | None = None) -> None:
+    def __init__(self, behaviour: Behaviour | None = None,
+                 origin: tuple[int, int] = (0, 0)) -> None:
         try:
             import pydirectinput
         except ImportError as exc:  # pragma: no cover - env dependent
@@ -54,6 +61,7 @@ class DirectInputTypist:
         pydirectinput.PAUSE = 0
         self._pydirectinput = pydirectinput
         self.behaviour = behaviour or Behaviour()
+        self.origin = origin
         self.typed: list[str] = []
         self.clicked: list[tuple[int, int]] = []
         self._min_seconds_per_char = self._pace()
@@ -79,12 +87,16 @@ class DirectInputTypist:
         self.typed.append(text)
 
     def click(self, x: int, y: int) -> None:
-        self._pydirectinput.click(x, y)
-        self.clicked.append((x, y))
+        """Frame coordinates in, virtual-screen click out (see DryRunTypist
+        .click)."""
+        absolute = (x + self.origin[0], y + self.origin[1])
+        self._pydirectinput.click(*absolute)
+        self.clicked.append(absolute)
 
 
-def make_typist(live: bool, behaviour: Behaviour | None = None):
-    return (DirectInputTypist if live else DryRunTypist)(behaviour)
+def make_typist(live: bool, behaviour: Behaviour | None = None,
+                origin: tuple[int, int] = (0, 0)):
+    return (DirectInputTypist if live else DryRunTypist)(behaviour, origin)
 
 
 class TypingWorker(threading.Thread):

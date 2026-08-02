@@ -18,6 +18,29 @@ import numpy as np
 DOTA_WINDOW_TITLE = "Dota 2"
 
 
+def _ensure_dpi_aware() -> None:
+    """Opt this process out of DPI virtualisation (Windows, best effort).
+
+    Regular python.exe declares DPI awareness in its manifest; the
+    PyInstaller windowed bootloader does not. A non-aware process gets its
+    coordinates silently rescaled on scaled displays, so the exe's clicks
+    landed off-target while `uv run` clicked true. Making awareness
+    explicit gives both the same physical-pixel view mss captures in.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        try:    # per-monitor v2, Windows 10 1703+
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(
+                ctypes.c_void_p(-4))
+        except (AttributeError, OSError):
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:   # noqa: BLE001 - already aware, or too old to matter
+        pass
+
+
 def _window_rect(title: str) -> tuple[int, int, int, int] | None:
     """Screen rectangle of a top-level window by exact title (Windows)."""
     if sys.platform != "win32":
@@ -125,6 +148,7 @@ class ScreenSource:
             raise RuntimeError(
                 "mss is not installed. Run: uv sync"
             ) from exc
+        _ensure_dpi_aware()
         self._mss = mss
         self.monitor_index = monitor
         self.interval = interval
@@ -132,6 +156,9 @@ class ScreenSource:
         with mss.mss() as sct:
             mon = sct.monitors[monitor]
             self.width, self.height = mon["width"], mon["height"]
+            # Frame pixels are monitor-relative; clicks are virtual-screen
+            # absolute. This origin is the difference.
+            self.origin = (mon["left"], mon["top"])
 
     def frames(self) -> Iterator[tuple[float, np.ndarray]]:
         """Yield the freshest frame available, captured on its own thread.

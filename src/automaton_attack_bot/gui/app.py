@@ -1,8 +1,10 @@
 """The control panel window.
 
-Layout: a status banner, stat cards (score / combo / words typed), play
-controls, a tools row exposing the other subcommands, and an activity
-feed. All actual work happens in :class:`tasks.TaskRunner`.
+Layout: menubar (tools live there), status banner, stat cards, big
+Start/Stop, and a one-line last-event strip. The full activity feed is a
+View-menu toggle -- most sessions never need it, and everything important
+already surfaces in the banner and cards. All actual work happens in
+:class:`tasks.TaskRunner`.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ _POLL_MS = 100
 def run_gui(args) -> int:
     try:
         import tkinter as tk
-        from tkinter import filedialog, ttk
+        from tkinter import filedialog, simpledialog, ttk
         from tkinter.scrolledtext import ScrolledText
     except ImportError as exc:
         print(f"error: tkinter unavailable ({exc}); run with --cli instead")
@@ -30,7 +32,7 @@ def run_gui(args) -> int:
     runner = TaskRunner()
     root = tk.Tk()
     root.title(f"Automaton Attack Bot v{__version__}")
-    root.minsize(600, 480)
+    root.minsize(560, 360)
 
     # -- status banner -----------------------------------------------------
     banner = tk.Label(root, text="IDLE", fg="white", bg=STATES["idle"][1],
@@ -52,41 +54,49 @@ def run_gui(args) -> int:
         ttk.Label(card, text=caption, font=("Segoe UI", 8)).pack()
         card_vars[key] = value
 
-    # -- play controls -----------------------------------------------------
-    play = ttk.LabelFrame(root, text="Play", padding=(10, 6))
-    play.pack(fill="x", padx=12)
-    start_btn = ttk.Button(play, text="Start")
-    start_btn.pack(side="left")
-    stop_btn = ttk.Button(play, text="Stop", state="disabled")
-    stop_btn.pack(side="left", padx=(6, 0))
+    # -- play controls: the two buttons ARE the interface ------------------
+    play = ttk.Frame(root, padding=(12, 4))
+    play.pack(fill="x")
+    start_btn = tk.Button(play, text="▶  START", fg="white",
+                          bg="#1f8a3b", activebackground="#26a147",
+                          activeforeground="white", relief="flat",
+                          font=("Segoe UI", 15, "bold"), pady=8)
+    start_btn.pack(side="left", fill="x", expand=True)
+    stop_btn = tk.Button(play, text="■  STOP", fg="white",
+                         bg="#8a8a8a", activebackground="#c62828",
+                         activeforeground="white", relief="flat",
+                         font=("Segoe UI", 15, "bold"), pady=8,
+                         state="disabled")
+    stop_btn.pack(side="left", fill="x", expand=True, padx=(8, 0))
+
+    options = ttk.Frame(root, padding=(12, 6))
+    options.pack(fill="x")
     dry_var = tk.BooleanVar(value=getattr(args, "dry_run", False))
-    ttk.Checkbutton(play, text="Dry run",
-                    variable=dry_var).pack(side="left", padx=(18, 0))
-    ttk.Label(play, text="Rounds:").pack(side="left", padx=(18, 4))
+    dry_check = ttk.Checkbutton(options, text="Dry run (type nothing)",
+                                variable=dry_var)
+    dry_check.pack(side="left")
+    ttk.Label(options, text="Rounds:").pack(side="left", padx=(18, 4))
     rounds_var = tk.StringVar(value=str(getattr(args, "rounds", 1)))
-    ttk.Spinbox(play, from_=1, to=99, width=4,
-                textvariable=rounds_var).pack(side="left")
+    rounds_box = ttk.Spinbox(options, from_=1, to=99, width=4,
+                             textvariable=rounds_var)
+    rounds_box.pack(side="left")
 
-    # -- tools -------------------------------------------------------------
-    tools = ttk.LabelFrame(root, text="Tools", padding=(10, 6))
-    tools.pack(fill="x", padx=12, pady=(8, 0))
-    tool_btns = []
+    # -- last event + optional activity feed -------------------------------
+    last_event = tk.Label(root, text="Ready.", anchor="w", fg="#777777",
+                          font=("Consolas", 9), padx=12)
+    last_event.pack(fill="x", pady=(0, 6))
 
-    def tool_button(label, command):
-        btn = ttk.Button(tools, text=label, command=command)
-        btn.pack(side="left", padx=(0, 6))
-        tool_btns.append(btn)
-        return btn
-
-    match_var = tk.StringVar()
-    match_entry = ttk.Entry(tools, textvariable=match_var, width=18)
-
-    # -- activity feed -----------------------------------------------------
     feed_frame = ttk.LabelFrame(root, text="Activity", padding=(4, 2))
-    feed_frame.pack(fill="both", expand=True, padx=12, pady=(8, 12))
     feed_view = ScrolledText(feed_frame, height=12, state="disabled",
                              font=("Consolas", 9), borderwidth=0)
     feed_view.pack(fill="both", expand=True)
+    feed_visible = tk.BooleanVar(value=False)
+
+    def toggle_feed():
+        if feed_visible.get():
+            feed_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        else:
+            feed_frame.pack_forget()
 
     # -- behaviour ---------------------------------------------------------
     def set_state(key):
@@ -94,16 +104,20 @@ def run_gui(args) -> int:
         banner.config(text=label, bg=colour)
 
     def append(text):
+        shown = display_text(text)
+        last_event.config(text=shown)
         feed_view["state"] = "normal"
-        feed_view.insert("end", display_text(text) + "\n")
+        feed_view.insert("end", shown + "\n")
         feed_view.see("end")
         feed_view["state"] = "disabled"
 
     def set_running(running, stoppable=False):
         start_btn["state"] = "disabled" if running else "normal"
+        start_btn["bg"] = "#8a8a8a" if running else "#1f8a3b"
         stop_btn["state"] = "normal" if running and stoppable else "disabled"
-        for btn in tool_btns:
-            btn["state"] = "disabled" if running else "normal"
+        stop_btn["bg"] = "#c62828" if running and stoppable else "#8a8a8a"
+        dry_check.state(["disabled"] if running else ["!disabled"])
+        rounds_box["state"] = "disabled" if running else "normal"
 
     def launch(argv, banner_state="working", stoppable=False):
         run_args = build_parser().parse_args(argv)
@@ -132,20 +146,34 @@ def run_gui(args) -> int:
             launch([subcommand, clip])
 
     def run_match():
-        text = match_var.get().strip()
-        if text:
-            launch(["match", text])
+        text = simpledialog.askstring(
+            "Match", "OCR read to resolve against the lexicon:", parent=root)
+        if text and text.strip():
+            launch(["match", text.strip()])
 
     start_btn["command"] = start_play
     stop_btn["command"] = lambda: (stop_btn.configure(state="disabled"),
                                    runner.request_stop())
-    tool_button("Doctor", lambda: launch(["doctor"]))
-    tool_button("Update data", lambda: launch(["update-data"]))
-    tool_button("Analyze clip...", lambda: pick_and_run("analyze"))
-    tool_button("Replay clip...", lambda: pick_and_run("replay"))
-    match_entry.pack(side="left", padx=(12, 4))
-    match_entry.bind("<Return>", lambda _e: run_match())
-    tool_button("Match", run_match)
+
+    # -- menubar -----------------------------------------------------------
+    menubar = tk.Menu(root)
+    tools = tk.Menu(menubar, tearoff=0)
+    tools.add_command(label="Doctor", command=lambda: launch(["doctor"]))
+    tools.add_command(label="Update word data",
+                      command=lambda: launch(["update-data"]))
+    tools.add_separator()
+    tools.add_command(label="Analyze clip...",
+                      command=lambda: pick_and_run("analyze"))
+    tools.add_command(label="Replay clip...",
+                      command=lambda: pick_and_run("replay"))
+    tools.add_separator()
+    tools.add_command(label="Match text...", command=run_match)
+    menubar.add_cascade(label="Tools", menu=tools)
+    view = tk.Menu(menubar, tearoff=0)
+    view.add_checkbutton(label="Show activity", variable=feed_visible,
+                         command=toggle_feed)
+    menubar.add_cascade(label="View", menu=view)
+    root.config(menu=menubar)
 
     def poll():
         try:

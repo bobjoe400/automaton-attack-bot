@@ -34,6 +34,14 @@ def _wire_console() -> None:
 if sys.stdout is None or sys.stderr is None:        # windowed build
     _wire_console()
 
+# DPI awareness must be set before any window (tkinter's included) exists.
+# Regular python.exe declares it in its manifest; the PyInstaller windowed
+# bootloader does not, and a non-aware process gets coordinates rescaled on
+# scaled displays -- the exe's PLAY clicks landed off-target that way.
+from automaton_attack_bot.core.capture import _ensure_dpi_aware  # noqa: E402
+
+_ensure_dpi_aware()
+
 from automaton_attack_bot.cli import main           # noqa: E402
 
 if __name__ == "__main__":

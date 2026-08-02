@@ -301,3 +301,26 @@ def test_parse_multiplier(text, expected):
     from automaton_attack_bot.core.session import parse_multiplier
 
     assert parse_multiplier(text) == expected
+
+
+# -- click gating -------------------------------------------------------
+@pytest.mark.clips
+def test_the_real_play_again_button_passes_verification(fullgame_frames,
+                                                        tracker):
+    assert tracker.verify_button(fullgame_frames(70.4),
+                                 GameState.GAME_OVER)
+
+
+def test_a_buttonless_game_over_fails_verification():
+    """Clicks once landed on bare background for a whole session; the
+    game-over click is text-gated (the start screen's ornate plate defeats
+    OCR, so its guard is the drive loop's futile-click breaker)."""
+    tracker = SessionTracker(backend=None, settings=Settings())
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    assert not tracker.verify_button(frame, GameState.GAME_OVER)
+
+
+def test_start_screen_clicks_are_not_text_gated():
+    tracker = SessionTracker(backend=None, settings=Settings())
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    assert tracker.verify_button(frame, GameState.START_SCREEN)

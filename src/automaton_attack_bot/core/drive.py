@@ -90,8 +90,10 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
      hinted, seen_playing, game_over_at, score_reported) = state_vars
     last_multiplier = None
     last_multiplier_read = -1e9
+    futile_clicks = 0       # clicks (or refusals) with no state change since
     in_flight = deque()     # (timestamp, future) of pipelined detections
     last_scan_submit = -1e9
+    FUTILE_CLICK_LIMIT = 3
     # Below this spacing, two scans see essentially the same frame and
     # 'stability' stops meaning anything (see Confirmer.MIN_STABLE_AGE).
     MIN_SCAN_SPACING = 0.08
@@ -128,6 +130,7 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
             proven = True
         if state is not previous:
             LOG.say(f"[{timestamp:7.2f}s] --- {state.value} ---")
+            futile_clicks = 0       # the screen responded; clicks work
         if (not tracker.transitions and not hinted
                 and timestamp - first_timestamp > 5.0):
             hinted = True
@@ -204,6 +207,23 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
             if state is GameState.GAME_OVER and (
                     not score_reported or rounds_done >= rounds):
                 continue
+            # Three strikes on either guard and the geometry lock is
+            # considered wrong: a hub page once classified as start-screen
+            # and got clicked, and a mislocated panel means the click spot
+            # is bare background either way.
+            if futile_clicks >= FUTILE_CLICK_LIMIT:
+                LOG.say(f"[{timestamp:7.2f}s] clicks are not landing -- "
+                        f"dropping the geometry lock to re-locate.")
+                proven = False
+                futile_clicks = 0
+                last_click = timestamp
+                continue
+            if not tracker.verify_button(frame, state):
+                LOG.say(f"[{timestamp:7.2f}s] {state.value} but no button "
+                        f"text at the click target -- not clicking.")
+                futile_clicks += 1
+                last_click = timestamp
+                continue
             x, y = tracker.button_position(state)
             label = ("PLAY" if state is GameState.START_SCREEN
                      else "PLAY AGAIN")
@@ -213,6 +233,7 @@ def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                 LOG.say(f"[{timestamp:7.2f}s] [dry-run] would click {label} "
                         f"at ({x}, {y})")
             typist.click(x, y)
+            futile_clicks += 1
             last_click = timestamp
 
     return engine, tracker

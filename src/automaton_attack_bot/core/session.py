@@ -43,6 +43,9 @@ TIMER_REGION = (0.40, 0.02, 0.585, 0.085)    # the "0:24" above TIME
 MULTIPLIER_REGION = (0.04, 0.102, 0.23, 0.143)  # the "x1.5" under SCORE
 PLAY_BUTTON = (0.4965, 0.857)                # start screen
 PLAY_AGAIN_BUTTON = (0.4965, 0.790)          # game-over screen
+# Half-extents (panel fractions) of the crop OCR'd to confirm the button
+# text before clicking it.
+BUTTON_REGION_HALF = (0.11, 0.04)
 
 TITLE_OCR_THRESHOLD = 120    # modal titles are bright on dark navy
 TITLE_MATCH_CUTOFF = 0.7
@@ -275,6 +278,33 @@ class SessionTracker:
                   else PLAY_AGAIN_BUTTON)
         return round(x0 + fx * (x1 - x0)), round(y0 + fy * (y1 - y0))
 
+    def verify_button(self, frame: np.ndarray, state: GameState) -> bool:
+        """The PLAY AGAIN banner really reads as one where we are about to
+        click.
+
+        Clicks once landed on bare background for a whole session, so
+        game-over clicks are text-gated: the modal's button reads cleanly
+        off the raw crop. The start screen's ornate PLAY plate defeats OCR
+        in every treatment tried (best read: 'PN'), so start-screen clicks
+        are gated by the drive loop's futile-click breaker instead.
+        """
+        if state is GameState.START_SCREEN:
+            return True
+        if self.backend is None:
+            return False
+        panel = self._panel(frame)
+        ph, pw = panel.shape[:2]
+        fx, fy = PLAY_AGAIN_BUTTON
+        half_w, half_h = BUTTON_REGION_HALF
+        region = panel[int(max(0.0, fy - half_h) * ph):int((fy + half_h) * ph),
+                       int(max(0.0, fx - half_w) * pw):int((fx + half_w) * pw)]
+        if region.size == 0:
+            return False
+        upscaled = cv2.resize(region, None, fx=3, fy=3,
+                              interpolation=cv2.INTER_CUBIC)
+        text = _letters(self.backend.read(upscaled))
+        return _fuzzy_contains(text, "PLAYAGAIN")
+
     # -- OCR helpers --------------------------------------------------------
     def _read_bright_text(self, region: np.ndarray) -> str:
         gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
@@ -295,16 +325,55 @@ class SessionTracker:
                               interpolation=cv2.INTER_CUBIC)
         return self.digit_reader.read(upscaled)
 
+    def _read_digit_cluster(self, region: np.ndarray) -> str:
+        """Isolate the right-aligned number in a label row and read it big.
+
+        Reading the whole row drops digits: the glyphs are ~8x12 px and the
+        label text steals the recogniser's attention ('Total Score 750'
+        came back 'TOELSOE 70'). Otsu the row, take the glyph components in
+        the right part, tight-crop their union, upscale hard with a white
+        margin. On the fullgame clip this reads 750 at every scale where
+        every whole-row variant failed.
+        """
+        if self.backend is None or region.size == 0:
+            return ""
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(gray, 0, 255,
+                                cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        count, _, stats, _ = cv2.connectedComponentsWithStats(
+            mask, connectivity=8)
+        height, width = mask.shape
+        boxes = [tuple(stats[i][:4]) for i in range(1, count)
+                 if 6 <= stats[i][3] <= height * 0.9
+                 and stats[i][0] >= width * 0.55]
+        if not boxes:
+            return ""
+        x0 = min(b[0] for b in boxes)
+        y0 = min(b[1] for b in boxes)
+        x1 = max(b[0] + b[2] for b in boxes)
+        y1 = max(b[1] + b[3] for b in boxes)
+        tight = mask[max(0, y0 - 4):y1 + 4, max(0, x0 - 4):x1 + 4]
+        upscaled = cv2.resize(255 - tight, None, fx=4, fy=4,
+                              interpolation=cv2.INTER_CUBIC)
+        upscaled = cv2.copyMakeBorder(upscaled, 24, 24, 24, 24,
+                                      cv2.BORDER_CONSTANT, value=255)
+        return self.backend.read(upscaled)
+
     def read_final_score(self, frame: np.ndarray) -> int | None:
         """Read "Total Score NNN" off the game-over screen.
 
         The digit reader (tesseract, digits whitelist, raw grayscale) reads
         comma-grouped totals exactly where the general backend garbles them
-        ('17,770' came back '17,7%'); fall back to the thresholded general
-        read when tesseract isn't installed.
+        ('17,770' came back '17,7%'). Without tesseract, the cluster read
+        isolates the number itself; the labelled-row parse is the last
+        resort.
         """
         region = self._region(self._panel(frame), SCORE_ROW_REGION)
         digits = "".join(c for c in self._read_digits(region) if c.isdigit())
+        if digits:
+            return int(digits)
+        digits = "".join(c for c in self._read_digit_cluster(region)
+                         if c.isdigit())
         if digits:
             return int(digits)
         row = self._read_bright_text(region)

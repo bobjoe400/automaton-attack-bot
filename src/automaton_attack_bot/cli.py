@@ -309,14 +309,15 @@ def cmd_run(args, stop_event=None) -> int:
     live = not args.dry_run
     if live:
         try:
-            typist = make_typist(True, settings.behaviour)
+            typist = make_typist(True, settings.behaviour,
+                                 origin=source.origin)
         except RuntimeError as exc:
             # A clone missing the input libs still gets a useful run.
             print(f"note: {exc}")
             print("Falling back to a dry run.")
             live = False
     if not live:
-        typist = make_typist(False, settings.behaviour)
+        typist = make_typist(False, settings.behaviour, origin=source.origin)
 
     mode = ("TYPING ENABLED (--dry-run to rehearse)" if live
             else "DRY RUN (no keys or clicks will be sent)")
