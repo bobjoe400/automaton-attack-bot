@@ -155,9 +155,6 @@ class Engine:
         # TypingWorker.pending_keystrokes so dedup windows can stretch by
         # the real service time (see _dedup_ttl).
         self.queue_keystrokes: Callable[[], int] = lambda: 0
-        # Lock-step state for throttled play: (name, pos, last emit time)
-        # of the word currently being fed to the game.
-        self._active_lock: tuple[str, tuple[int, int], float] | None = None
         # Live age ledger: when each on-screen word was first read. Words
         # live ~3.5s from first readable label to the platform no matter
         # their path -- an arcing word looks geometrically safe at its
@@ -210,45 +207,45 @@ class Engine:
     # don't match it (run27 frame-by-frame: MJOLLNIR's entire first
     # typing ran during BUTTERFLY's lock -- every key wasted, audibly).
     LOCKSTEP_THRESHOLD = 0.02
-    # After the active word's own service time, wait this long for the
-    # scan to confirm the kill before feeding its keystrokes again.
+    # Re-feed clock for the game's selected word (the sole visible one)
+    # while it survives our keystrokes.
     ACTIVE_RETRY = 0.30
 
     def _process_lockstep(self, timestamp: float,
                           detections: list[Detection]) -> list[TypedWord]:
-        """Throttled play: one word at a time, matched to the game's lock.
+        """Throttled play: feed the game's selection, one word in flight.
 
-        Type the most urgent word, then feed ONLY that word until it
-        leaves the screen -- a full retype's tail always completes it,
-        wherever its progress stands -- and never spend keystrokes on
-        words the game is discarding. Insurance and embedded side-typing
-        stay off here: they assume wrong keys are free, and at capped
-        WPM keys are the scarcest thing there is.
+        Grounded in what the screen guarantees: during a lock, every
+        label EXCEPT the selected word renders invisible-gray -- so the
+        set of visible words tells us the selection state directly. The
+        rules that follow:
+
+        * never emit while keystrokes are in flight -- run29 showed the
+          old 'active vanished = done' inference blind-queueing words
+          the moment ours got de-selected, 3s queue waits, keys typed
+          into the void;
+        * exactly one visible word IS the selection: re-feed it on a
+          short clock until it dies (a full retype's tail completes it
+          wherever its progress stands);
+        * several visible words = no lock: the most urgent one gets our
+          first key and becomes the selection.
+
+        Insurance and embedded side-typing stay off here: they assume
+        wrong keys are free, and at capped WPM keys are time.
         """
-        if self._active_lock is not None:
-            name, pos, since = self._active_lock
-            current = next(
-                (d for d in detections if d.match and d.name == name
-                 and abs(d.box[0] - pos[0]) < self.deduper.radius
-                 and abs(d.box[1] - pos[1]) < self.deduper.radius), None)
-            if current is not None:
-                own = len(current.match.keystrokes)
-                if (timestamp - since
-                        >= own * self._char_seconds() + self.ACTIVE_RETRY):
-                    self._active_lock = (name, current.pos, timestamp)
-                    return [self._emit(timestamp, current)]
-                return []
-            self._active_lock = None
-        for detection in detections:
-            if not detection.match:
-                continue
-            if self.deduper.seen(detection.name, detection.pos):
+        if self.queue_keystrokes() > 0:
+            return []
+        matched = [d for d in detections if d.match]
+        sole = matched[0] if len(matched) == 1 else None
+        for detection in matched:
+            ttl = (self.ACTIVE_RETRY if detection is sole
+                   else self._dedup_ttl(detection))
+            if self.deduper.seen(detection.name, detection.pos, ttl=ttl):
                 self.stats.suppressed_duplicate += 1
                 continue
             if not self.confirmer.ready(detection, timestamp):
                 self.stats.awaiting_confirmation += 1
                 continue
-            self._active_lock = (detection.name, detection.pos, timestamp)
             return [self._emit(timestamp, detection)]
         return []
 

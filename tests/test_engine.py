@@ -410,13 +410,17 @@ def test_replay_ttls_disable_the_danger_retype():
 def test_throttled_typing_does_not_double_type():
     """Run25 at 100 WPM: nearly every word typed TWICE. A capped word is
     still being typed when the instant-typing dedup window expires, so
-    the window stretches by the word's own service time."""
+    the window stretches by the word's own service time. (With several
+    words visible there is no held lock, so the sole-visible fast refeed
+    does not apply.)"""
     data = Settings().to_dict()
     data["behaviour"]["max_wpm"] = 100.0
     settings = Settings.from_dict(data)
     deep = detection("SKULL BASHER", 1.0, pos=(430, 545))
-    typist = run_clocked([[deep], [deep]], settings=settings, step=0.5)
-    assert typist.typed == ["skullbasher"]
+    other = detection("AXE", 1.0, pos=(100, 100))
+    typist = run_clocked([[deep, other], [deep, other]],
+                         settings=settings, step=0.5)
+    assert typist.typed.count("skullbasher") == 1
 
 
 def test_keyboard_backlog_stretches_the_window_too():
@@ -440,15 +444,29 @@ def wpm_settings(wpm=150.0):
     return Settings.from_dict(data)
 
 
-def test_lockstep_types_one_word_at_a_time():
-    """Run27: the game feeds ONE active word and discards other keys --
-    MJOLLNIR's whole first typing ran during BUTTERFLY's lock, audibly
-    wasted. Throttled play must never start word two while word one is
-    still on screen."""
+def test_lockstep_never_emits_while_keys_are_in_flight():
+    """Run29: 'active word vanished' used to mean 'done' -- but during a
+    lock every word EXCEPT the selection is invisible, so the engine
+    blind-queued words into 3s waits, keys typed into the void. One word
+    in flight, ever."""
+    settings = wpm_settings()
+    detector = FakeDetector([], settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    engine.queue_keystrokes = lambda: 8
     a = detection("KAYA", 1.0, pos=(300, 300))
     b = detection("MJOLLNIR", 1.0, pos=(700, 300))
-    typist = run_clocked([[a, b], [a, b]], settings=wpm_settings(), step=0.2)
-    assert typist.typed == ["kaya"]
+    assert engine.process_detections(0.0, [a, b]) == []
+    assert typist.typed == []
+
+
+def test_lockstep_feeds_next_word_when_several_are_visible():
+    """Several visible words = no lock held; the most urgent becomes the
+    selection with our first key."""
+    a = detection("KAYA", 1.0, pos=(300, 300))
+    b = detection("MJOLLNIR", 1.0, pos=(700, 300))
+    typist = run_clocked([[a, b], [a, b]], settings=wpm_settings(), step=0.5)
+    assert typist.typed == ["kaya", "mjollnir"]
 
 
 def test_lockstep_moves_on_when_the_active_word_dies():
@@ -458,12 +476,13 @@ def test_lockstep_moves_on_when_the_active_word_dies():
     assert typist.typed == ["kaya", "mjollnir"]
 
 
-def test_lockstep_refeeds_a_surviving_active_word():
-    """A full retype's tail completes the word wherever its progress
-    stands; own service time + a confirmation beat first."""
+def test_lockstep_refeeds_the_sole_visible_word_fast():
+    """Exactly one visible word IS the game's selection: while it
+    survives our keystrokes it needs more of them, on a short clock --
+    a full retype's tail completes it wherever its progress stands."""
     a = detection("KAYA", 1.0, pos=(300, 300))
     typist = run_clocked([[a], [a], [a]], settings=wpm_settings(), step=0.5)
-    assert typist.typed == ["kaya", "kaya"]     # 0.32s service + 0.3s < 1.0s
+    assert typist.typed == ["kaya", "kaya", "kaya"]
 
 
 def test_lockstep_skips_insurance_and_embedded():
