@@ -11,7 +11,7 @@ def describe(word) -> str:
 
 def drive(frames, lexicon, backend, settings, typist, *,
            locate=True, auto_start=False, rounds=1,
-           stop_on_game_over=True, debug=False, threaded=False):
+           stop_on_game_over=True, threaded=False):
     """Session-aware scan loop shared by replay and run.
 
     Tracks game state alongside word detection: types only while the game is
@@ -44,27 +44,12 @@ def drive(frames, lexicon, backend, settings, typist, *,
         # consecutive-scan semantics require it); only the OCR overlaps.
         scan_pipeline = ThreadPoolExecutor(max_workers=2,
                                            thread_name_prefix="scan")
-    # Geometry is "proven" once the tracker recognises any game state with
-    # it. Until then, keep re-locating: locking on the first plausible
-    # rectangle once blinded a whole session when a transitional frame
-    # produced a wrong-but-plausible panel.
-    proven = False
-    rounds_done = 0
-    last_click = -1e9
-    first_timestamp = None
-    hinted = False
-    seen_playing = False
-    game_over_at = None
-    score_reported = False
-
     try:
         return _drive_loop(
             frames, lexicon, backend, settings, typist, engine, tracker,
             worker, scan_pipeline,
             locate=locate, auto_start=auto_start, rounds=rounds,
-            stop_on_game_over=stop_on_game_over, debug=debug,
-            state_vars=(proven, rounds_done, last_click, first_timestamp,
-                        hinted, seen_playing, game_over_at, score_reported))
+            stop_on_game_over=stop_on_game_over)
     finally:
         if scan_pipeline is not None:
             scan_pipeline.shutdown(wait=False, cancel_futures=True)
@@ -80,14 +65,24 @@ def drive(frames, lexicon, backend, settings, typist, *,
 
 def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
                 worker, scan_pipeline, *, locate, auto_start, rounds,
-                stop_on_game_over, debug, state_vars):
+                stop_on_game_over):
     from collections import deque
 
     from .detect import Detector
     from .session import GameState, SessionTracker, locate_panel
 
-    (proven, rounds_done, last_click, first_timestamp,
-     hinted, seen_playing, game_over_at, score_reported) = state_vars
+    # Geometry is "proven" once the tracker recognises any game state with
+    # it. Until then, keep re-locating: locking on the first plausible
+    # rectangle once blinded a whole session when a transitional frame
+    # produced a wrong-but-plausible panel.
+    proven = False
+    rounds_done = 0
+    last_click = -1e9
+    first_timestamp = None
+    hinted = False
+    seen_playing = False
+    game_over_at = None
+    score_reported = False
     last_multiplier = None
     last_multiplier_read = -1e9
     futile_clicks = 0       # clicks (or refusals) with no state change since

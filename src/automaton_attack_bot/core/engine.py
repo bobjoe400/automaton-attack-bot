@@ -323,17 +323,29 @@ class Engine:
             if not self.confirmer.ready(detection, timestamp):
                 self.stats.awaiting_confirmation += 1
                 continue
-            self.deduper.mark(detection.name, detection.pos)
-            word = TypedWord(timestamp, detection, detection.match.keystrokes)
-            self.dispatch(word)
-            self.stats.record(word)
-            typed.append(word)
+            typed.append(self._emit(timestamp, detection))
         typed.extend(self._type_embedded(timestamp, detections))
         typed.extend(self._insure_weak_matches(timestamp, detections))
         # Update after the loop: a word must survive real time on screen,
         # not be confirmed by its own detection.
         self.confirmer.update(detections, timestamp)
         return typed
+
+    def _emit(self, timestamp: float, detection: Detection,
+              match: Match | None = None) -> TypedWord:
+        """Mark the deduper, build the word, dispatch it, count it.
+
+        With ``match``, the word types as that match instead of the
+        detection's own (embedded mining and verbatim insurance ride on
+        another detection's box and raw read).
+        """
+        if match is not None:
+            detection = replace(detection, match=match)
+        self.deduper.mark(detection.name, detection.pos)
+        word = TypedWord(timestamp, detection, detection.match.keystrokes)
+        self.dispatch(word)
+        self.stats.record(word)
+        return word
 
     def _type_embedded(self, timestamp: float,
                        detections: list[Detection]) -> list[TypedWord]:
@@ -363,16 +375,8 @@ class Engine:
                 if self.deduper.seen(name, detection.pos,
                                      ttl=self._dedup_ttl(detection)):
                     continue
-                self.deduper.mark(name, detection.pos)
-                embedded = Match(name, 1.0, "vocab")
-                word = TypedWord(timestamp,
-                                 Detection(box=detection.box,
-                                           raw=detection.raw,
-                                           match=embedded),
-                                 embedded.keystrokes)
-                self.dispatch(word)
-                self.stats.record(word)
-                out.append(word)
+                out.append(self._emit(timestamp, detection,
+                                      Match(name, 1.0, "vocab")))
         return out
 
     def _insure_weak_matches(self, timestamp: float,
@@ -410,14 +414,7 @@ class Engine:
                 continue
             if self.deduper.seen(key, detection.pos):
                 continue
-            self.deduper.mark(key, detection.pos)
-            word = TypedWord(timestamp,
-                             Detection(box=detection.box, raw=detection.raw,
-                                       match=verbatim),
-                             verbatim.keystrokes)
-            self.dispatch(word)
-            self.stats.record(word)
-            insured.append(word)
+            insured.append(self._emit(timestamp, detection, verbatim))
         self._raw_first_seen = {
             key: self._raw_first_seen.get(key, timestamp) for key in current
         }

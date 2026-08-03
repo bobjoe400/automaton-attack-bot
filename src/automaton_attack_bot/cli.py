@@ -1,10 +1,10 @@
 """Command-line interface.
 
-    automaton                     play: find the game, click PLAY, type the
-                                  round, report the score (--dry-run rehearses)
+    automaton                     open the control panel (--cli plays in the
+                                  terminal; --dry-run rehearses)
     automaton doctor              check the environment
     automaton replay CLIP         run detection over a recording (never types)
-    automaton analyze CLIP        report reads that look like misses
+    automaton analyze CLIP        report misses and per-word screen time
     automaton match TEXT          ask the lexicon what a read resolves to
     automaton calibrate           dump mask/blob diagnostics from a frame
     automaton update-data         rebuild the word corpora from upstream
@@ -50,8 +50,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="automaton",
         description="Bot for Dota 2's Automaton Attack typing minigame. "
-                    "With no subcommand it plays: finds the Dota window and "
-                    "the minigame panel, clicks PLAY, types the round, "
+                    "With no subcommand it opens the control panel; with "
+                    "--cli it plays in the terminal: finds the Dota window "
+                    "and the minigame panel, clicks PLAY, types the round, "
                     "reports the score and exits.",
     )
     parser.add_argument("--version", action="version",
@@ -132,21 +133,34 @@ def _settings_from_args(args) -> Settings:
     settings, path = load_settings(getattr(args, "config", None))
     if path:
         print(f"Using config {path}")
+    data = settings.to_dict()
+    changed = False
     if getattr(args, "safe_mode", False):
-        settings = Settings.from_dict({**settings.to_dict(), "safe_mode": True})
+        data["safe_mode"] = True
+        changed = True
     if getattr(args, "no_auto_color", False):
-        data = settings.to_dict()
         data["color"]["auto"] = False
-        settings = Settings.from_dict(data)
+        changed = True
     if getattr(args, "stride", None):
-        data = settings.to_dict()
         data["behaviour"]["replay_stride"] = args.stride
-        settings = Settings.from_dict(data)
+        changed = True
     if getattr(args, "max_wpm", None):
-        data = settings.to_dict()
         data["behaviour"]["max_wpm"] = args.max_wpm
-        settings = Settings.from_dict(data)
-    return settings
+        changed = True
+    return Settings.from_dict(data) if changed else settings
+
+
+def _attach_session_log(prefix: str, echo_detail: bool) -> Path:
+    """Open logs/<prefix>-<stamp>.log and route the session log to it."""
+    import datetime
+
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = log_dir / f"{prefix}-{stamp}.log"
+    LOG.attach(log_path, echo_detail=echo_detail)
+    LOG.say(f"Session log (full detail): {log_path}")
+    return log_path
 
 
 def _load_lexicon(args, settings: Settings) -> Lexicon:
@@ -222,18 +236,11 @@ def cmd_update_data(args) -> int:
 
 
 def cmd_replay(args) -> int:
-    import datetime
-
     from .core.capture import VideoSource
     from .core.keyboard import DryRunTypist
     from .core.ocr import get_backend
 
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_path = log_dir / f"replay-{stamp}.log"
-    LOG.attach(log_path, echo_detail=args.debug)
-    LOG.say(f"Session log (full detail): {log_path}")
+    _attach_session_log("replay", echo_detail=args.debug)
 
     settings = _settings_from_args(args)
     lexicon = _load_lexicon(args, settings)
@@ -258,7 +265,7 @@ def cmd_replay(args) -> int:
             DryRunTypist(settings.behaviour),
             locate=not args.no_locate_panel,
             stop_on_game_over=False,
-            debug=args.debug,
+
         )
         summarise(engine, tracker)
     finally:
@@ -277,18 +284,11 @@ def cmd_run(args, stop_event=None) -> int:
     """Play. ``stop_event`` is the GUI's stop button: the screen-capture
     generator is endless, so a cooperative cut is the clean way out of
     the drive loop from another thread."""
-    import datetime
-
     from .core.capture import ScreenSource, find_game_monitor
     from .core.keyboard import make_typist
     from .core.ocr import get_backend
 
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_path = log_dir / f"run-{stamp}.log"
-    LOG.attach(log_path, echo_detail=args.debug)
-    LOG.say(f"Session log (full detail): {log_path}")
+    _attach_session_log("run", echo_detail=args.debug)
 
     settings = _settings_from_args(args)
     lexicon = _load_lexicon(args, settings)
@@ -334,7 +334,7 @@ def cmd_run(args, stop_event=None) -> int:
             auto_start=not args.no_auto_start,
             rounds=args.rounds,
             stop_on_game_over=not args.keep_running,
-            debug=args.debug,
+
             threaded=True,
         )
         summarise(engine, tracker)
@@ -347,7 +347,7 @@ def cmd_run(args, stop_event=None) -> int:
 
 
 def cmd_analyze(args) -> int:
-    from .analyze import ReadLog
+    from .analyze import PLATFORM_BAND, ReadLog
     from .core.capture import VideoSource
     from .core.detect import Detector
     from .core.ocr import get_backend
@@ -385,10 +385,11 @@ def cmd_analyze(args) -> int:
                                          timestamp=timestamp):
             log.add(timestamp, detection, clock=clock)
             bottom = detection.box[1] + detection.box[3]
-            if detection.name and bottom / panel_height < 0.70:
+            if (detection.name
+                    and bottom / panel_height < PLATFORM_BAND):
                 log.add_lifetime(timestamp, detection.name,
                                  bottom / panel_height, clock=clock)
-            if bottom / panel_height >= 0.70 and (detection.name
+            if bottom / panel_height >= PLATFORM_BAND and (detection.name
                                                   or detection.raw.strip()):
                 log.add_strike(timestamp, clock,
                                detection.name or detection.raw.strip())
