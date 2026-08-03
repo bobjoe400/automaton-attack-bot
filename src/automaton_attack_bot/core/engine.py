@@ -155,6 +155,9 @@ class Engine:
         # TypingWorker.pending_keystrokes so dedup windows can stretch by
         # the real service time (see _dedup_ttl).
         self.queue_keystrokes: Callable[[], int] = lambda: 0
+        # Lock-step state for throttled play: (name, pos, last emit time)
+        # of the word currently being fed to the game.
+        self._active_lock: tuple[str, tuple[int, int], float] | None = None
 
     # Where Hoodwink stands, in panel fractions: words die when their
     # automaton reaches this point, so distance to it is time-to-live.
@@ -195,6 +198,53 @@ class Engine:
         """Seconds one keystroke takes under the current speed settings."""
         wpm = self.settings.behaviour.max_wpm
         return 60.0 / (wpm * 5.0) if wpm > 0 else self.SECONDS_PER_KEY
+
+    # Lock-step mode engages when keystrokes cost real time (<=600 WPM).
+    # The game feeds ONE active word at a time and DISCARDS keys that
+    # don't match it (run27 frame-by-frame: MJOLLNIR's entire first
+    # typing ran during BUTTERFLY's lock -- every key wasted, audibly).
+    LOCKSTEP_THRESHOLD = 0.02
+    # After the active word's own service time, wait this long for the
+    # scan to confirm the kill before feeding its keystrokes again.
+    ACTIVE_RETRY = 0.30
+
+    def _process_lockstep(self, timestamp: float,
+                          detections: list[Detection]) -> list[TypedWord]:
+        """Throttled play: one word at a time, matched to the game's lock.
+
+        Type the most urgent word, then feed ONLY that word until it
+        leaves the screen -- a full retype's tail always completes it,
+        wherever its progress stands -- and never spend keystrokes on
+        words the game is discarding. Insurance and embedded side-typing
+        stay off here: they assume wrong keys are free, and at capped
+        WPM keys are the scarcest thing there is.
+        """
+        if self._active_lock is not None:
+            name, pos, since = self._active_lock
+            current = next(
+                (d for d in detections if d.match and d.name == name
+                 and abs(d.box[0] - pos[0]) < self.deduper.radius
+                 and abs(d.box[1] - pos[1]) < self.deduper.radius), None)
+            if current is not None:
+                own = len(current.match.keystrokes)
+                if (timestamp - since
+                        >= own * self._char_seconds() + self.ACTIVE_RETRY):
+                    self._active_lock = (name, current.pos, timestamp)
+                    return [self._emit(timestamp, current)]
+                return []
+            self._active_lock = None
+        for detection in detections:
+            if not detection.match:
+                continue
+            if self.deduper.seen(detection.name, detection.pos):
+                self.stats.suppressed_duplicate += 1
+                continue
+            if not self.confirmer.ready(detection, timestamp):
+                self.stats.awaiting_confirmation += 1
+                continue
+            self._active_lock = (detection.name, detection.pos, timestamp)
+            return [self._emit(timestamp, detection)]
+        return []
 
     def _dedup_ttl(self, detection: Detection) -> float | None:
         """Retype window for a typed word that is still visible (live
@@ -326,6 +376,10 @@ class Engine:
         self.last_detections = detections
         self.stats.frames += 1
         self.stats.detections += sum(1 for d in detections if d.match)
+        if self._char_seconds() >= self.LOCKSTEP_THRESHOLD:
+            typed = self._process_lockstep(timestamp, detections)
+            self.confirmer.update(detections, timestamp)
+            return typed
         typed = []
         for detection in detections:
             if not detection.match:

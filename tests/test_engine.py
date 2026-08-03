@@ -431,3 +431,43 @@ def test_keyboard_backlog_stretches_the_window_too():
     engine.queue_keystrokes = lambda: 40        # 40 keys * 0.12s = 4.8s
     deep = detection("AXE", 1.0, pos=(430, 545))
     assert engine._dedup_ttl(deep) > 4.8
+
+
+# -- lock-step throttled play ------------------------------------------------
+def wpm_settings(wpm=150.0):
+    data = Settings().to_dict()
+    data["behaviour"]["max_wpm"] = wpm
+    return Settings.from_dict(data)
+
+
+def test_lockstep_types_one_word_at_a_time():
+    """Run27: the game feeds ONE active word and discards other keys --
+    MJOLLNIR's whole first typing ran during BUTTERFLY's lock, audibly
+    wasted. Throttled play must never start word two while word one is
+    still on screen."""
+    a = detection("KAYA", 1.0, pos=(300, 300))
+    b = detection("MJOLLNIR", 1.0, pos=(700, 300))
+    typist = run_clocked([[a, b], [a, b]], settings=wpm_settings(), step=0.2)
+    assert typist.typed == ["kaya"]
+
+
+def test_lockstep_moves_on_when_the_active_word_dies():
+    a = detection("KAYA", 1.0, pos=(300, 300))
+    b = detection("MJOLLNIR", 1.0, pos=(700, 300))
+    typist = run_clocked([[a, b], [b]], settings=wpm_settings(), step=0.5)
+    assert typist.typed == ["kaya", "mjollnir"]
+
+
+def test_lockstep_refeeds_a_surviving_active_word():
+    """A full retype's tail completes the word wherever its progress
+    stands; own service time + a confirmation beat first."""
+    a = detection("KAYA", 1.0, pos=(300, 300))
+    typist = run_clocked([[a], [a], [a]], settings=wpm_settings(), step=0.5)
+    assert typist.typed == ["kaya", "kaya"]     # 0.32s service + 0.3s < 1.0s
+
+
+def test_lockstep_skips_insurance_and_embedded():
+    """Keys are time at capped WPM; speculative typing is off."""
+    weak = detection("HYPNOTIZE", 0.65, raw="HYPOTHERMIA")
+    typist = run_clocked([[weak], [weak]], settings=wpm_settings(), step=0.2)
+    assert typist.typed == ["hypnotize"]
