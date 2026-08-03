@@ -220,64 +220,57 @@ class Engine:
     # pipeline frame the moment the keyboard went idle -- 17 of 49
     # words double-typed, ~190 ghost keys, 44% overhead.
     KILL_CONFIRM = 0.35
+    # Detection can flicker for a scan or two (fast mover over a light
+    # barrel); a word stays a believed-alive candidate this long after
+    # its last sighting.
+    FLICKER_WINDOW = 0.6
 
     def _process_lockstep(self, timestamp: float,
                           detections: list[Detection]) -> list[TypedWord]:
-        """Throttled play: feed the game's selection, one word in flight.
+        """Throttled play: six rules, one ledger, nothing else.
 
-        Grounded in what the screen guarantees: during a lock, every
-        label EXCEPT the selected word renders invisible-gray -- so the
-        set of visible words tells us the selection state directly. The
-        rules that follow:
-
-        * never emit while keystrokes are in flight -- run29 showed the
-          old 'active vanished = done' inference blind-queueing words
-          the moment ours got de-selected, 3s queue waits, keys typed
-          into the void;
-        * exactly one visible word IS the selection: re-feed it on a
-          short clock until it dies (a full retype's tail completes it
-          wherever its progress stands);
-        * several visible words = no lock: the most urgent one gets our
-          first key and becomes the selection.
-
-        Insurance and embedded side-typing stay off here: they assume
-        wrong keys are free, and at capped WPM keys are time.
+        1. Never interrupt a started word (run32: detection flicker is
+           OUR problem, never evidence about the game).
+        2. Never idle while an eligible word exists.
+        3. One word in flight, ever (run29).
+        4. Eligibility comes from the LEDGER, not the scan: a word is a
+           candidate if seen within the flicker window, and either never
+           typed or seen again after its typing ended plus a
+           kill-confirm beat -- a killed word vanishes instantly, so
+           surviving your own keystrokes means it needs more of them
+           (runs 25/30). Divers that blink out of the deciding scan stay
+           candidates (SVEN, run32).
+        5. Earliest deadline first: min(position, lifetime) minus
+           service time, stacks top-first (runs 20/28).
+        6. No speculation under a WPM cap: insurance and embedded mining
+           assume wrong keys are free; here keys are time (run27).
         """
-        matched = [d for d in detections if d.match]
         if self.queue_keystrokes() > 0:
-            # Never interrupt a started word: run32 froze mid-word nine
-            # times because detection flicker over the light barrels was
-            # mistaken for the word vanishing (the label renders in FRONT
-            # of scenery -- it was our mask losing contrast, not the game
-            # hiding the word). Keys for a live word always land.
+            return []                                       # rules 1 + 3
+        candidates = []
+        for entry in self._ages:
+            det = entry.get("det")
+            if det is None or not det.match:
+                continue
+            if timestamp - entry["last"] > self.FLICKER_WINDOW:
+                continue                    # believed gone (or truly dead)
+            typed_end = entry.get("typed_end")
+            if typed_end is not None:
+                if timestamp < typed_end + self.KILL_CONFIRM:
+                    continue                # keys just landed; await kill
+                if entry["last"] <= typed_end:
+                    continue                # never seen again: presumed dead
+            candidates.append((entry, det))
+        if not candidates:
             return []
-        sole = matched[0] if len(matched) == 1 else None
-        # Rescue: a word can flicker out of OUR detection for a scan or
-        # two (fast mover crossing a light barrel) exactly when it is
-        # about to die -- SVEN dove 166->756, vanished from the deciding
-        # scan, lost the pick to a safer word and struck. A recently-seen
-        # word with little lifetime left competes using its last known
-        # detection: the game still renders its label, so keys land.
-        names = {d.name for d in matched}
-        rescues = [e["det"] for e in self._ages
-                   if e["name"] not in names and "det" in e
-                   and 0.0 < timestamp - e["last"] <= 0.6
-                   and self.WORD_LIFETIME - (timestamp - e["first"]) < 1.2]
-        candidates = sorted(matched + rescues, key=self._urgency)
-        for detection in candidates:
-            if detection is sole:
-                own = len(detection.match.keystrokes)
-                ttl = own * self._char_seconds() + self.KILL_CONFIRM
-            else:
-                ttl = self._dedup_ttl(detection)
-            if self.deduper.seen(detection.name, detection.pos, ttl=ttl):
-                self.stats.suppressed_duplicate += 1
-                continue
-            if not self.confirmer.ready(detection, timestamp):
-                self.stats.awaiting_confirmation += 1
-                continue
-            return [self._emit(timestamp, detection)]
-        return []
+        entry, det = min(candidates, key=lambda c: self._urgency(c[1]))
+        if not self.confirmer.ready(det, timestamp):
+            self.stats.awaiting_confirmation += 1
+            return []
+        entry["typed_end"] = (timestamp
+                             + len(det.match.keystrokes)
+                             * self._char_seconds())
+        return [self._emit(timestamp, det)]                 # rules 2 + 5
 
     def _dedup_ttl(self, detection: Detection) -> float | None:
         """Retype window for a typed word that is still visible (live

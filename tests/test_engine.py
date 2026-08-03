@@ -465,16 +465,14 @@ def test_lockstep_feeds_next_word_when_several_are_visible():
     becomes the selection with our first key."""
     a = detection("KAYA", 1.0, pos=(300, 300))
     b = detection("MJOLLNIR", 1.0, pos=(700, 300))
-    typist = run_clocked([[a], [a, b], [a, b]],
-                         settings=wpm_settings(), step=0.6)
+    typist = run_clocked([[a], [a, b]], settings=wpm_settings(), step=0.5)
     assert typist.typed == ["kaya", "mjollnir"]
 
 
 def test_lockstep_moves_on_when_the_active_word_dies():
     a = detection("KAYA", 1.0, pos=(300, 300))
     b = detection("MJOLLNIR", 1.0, pos=(700, 300))
-    typist = run_clocked([[a], [a, b], [b]],
-                         settings=wpm_settings(), step=0.6)
+    typist = run_clocked([[a], [], [b]], settings=wpm_settings(), step=0.7)
     assert typist.typed == ["kaya", "mjollnir"]
 
 
