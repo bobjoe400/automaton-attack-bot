@@ -18,6 +18,42 @@ from .tasks import TaskRunner
 _POLL_MS = 100
 
 
+def play_argv(*, dry_run=False, rounds=1, max_wpm=0.0, auto_start=True,
+              keep_running=False, safe_mode=False, auto_color=True,
+              locate_panel=True, phrases=True, debug=False,
+              monitor="auto", ocr="auto") -> list[str]:
+    """The panel's play settings as CLI argv.
+
+    Every play option the terminal offers is available from the panel;
+    building the argv through the real parser keeps the two entrances
+    incapable of drifting apart.
+    """
+    argv = ["--rounds", str(rounds)]
+    if dry_run:
+        argv.append("--dry-run")
+    if max_wpm and float(max_wpm) > 0:
+        argv += ["--max-wpm", str(max_wpm)]
+    if not auto_start:
+        argv.append("--no-auto-start")
+    if keep_running:
+        argv.append("--keep-running")
+    if safe_mode:
+        argv.append("--safe-mode")
+    if not auto_color:
+        argv.append("--no-auto-color")
+    if not locate_panel:
+        argv.append("--no-locate-panel")
+    if not phrases:
+        argv.append("--no-phrases")
+    if debug:
+        argv.append("--debug")
+    if str(monitor).strip() and str(monitor) != "auto":
+        argv += ["--monitor", str(monitor).strip()]
+    if ocr != "auto":
+        argv += ["--ocr", ocr]
+    return argv
+
+
 def run_gui(args) -> int:
     try:
         import tkinter as tk
@@ -80,6 +116,25 @@ def run_gui(args) -> int:
     rounds_box = ttk.Spinbox(options, from_=1, to=99, width=4,
                              textvariable=rounds_var)
     rounds_box.pack(side="left")
+    ttk.Label(options, text="Max WPM (0 = unlimited):").pack(side="left",
+                                                             padx=(18, 4))
+    wpm_var = tk.StringVar(value=str(getattr(args, "max_wpm", None) or 0))
+    wpm_box = ttk.Spinbox(options, from_=0, to=2000, increment=50, width=6,
+                          textvariable=wpm_var)
+    wpm_box.pack(side="left")
+
+    # Every remaining play flag lives in the Options menu (built below).
+    auto_start_var = tk.BooleanVar(
+        value=not getattr(args, "no_auto_start", False))
+    keep_var = tk.BooleanVar(value=getattr(args, "keep_running", False))
+    safe_var = tk.BooleanVar(value=getattr(args, "safe_mode", False))
+    color_var = tk.BooleanVar(value=not getattr(args, "no_auto_color", False))
+    locate_var = tk.BooleanVar(
+        value=not getattr(args, "no_locate_panel", False))
+    phrases_var = tk.BooleanVar(value=not getattr(args, "no_phrases", False))
+    debug_var = tk.BooleanVar(value=getattr(args, "debug", False))
+    monitor_var = tk.StringVar(value=str(getattr(args, "monitor", "auto")))
+    ocr_var = tk.StringVar(value=getattr(args, "ocr", "auto"))
 
     # -- last event + optional activity feed -------------------------------
     last_event = tk.Label(root, text="Ready.", anchor="w", fg="#777777",
@@ -118,6 +173,7 @@ def run_gui(args) -> int:
         stop_btn["bg"] = "#c62828" if running and stoppable else "#8a8a8a"
         dry_check.state(["disabled"] if running else ["!disabled"])
         rounds_box["state"] = "disabled" if running else "normal"
+        wpm_box["state"] = "disabled" if running else "normal"
 
     def launch(argv, banner_state="working", stoppable=False):
         run_args = build_parser().parse_args(argv)
@@ -134,8 +190,18 @@ def run_gui(args) -> int:
     def start_play():
         for key in card_vars:
             card_vars[key].config(text="--", fg="black")
-        launch((["--dry-run"] if dry_var.get() else [])
-               + ["--rounds", rounds_var.get() or "1"],
+        launch(play_argv(dry_run=dry_var.get(),
+                         rounds=rounds_var.get() or "1",
+                         max_wpm=float(wpm_var.get() or 0),
+                         auto_start=auto_start_var.get(),
+                         keep_running=keep_var.get(),
+                         safe_mode=safe_var.get(),
+                         auto_color=color_var.get(),
+                         locate_panel=locate_var.get(),
+                         phrases=phrases_var.get(),
+                         debug=debug_var.get(),
+                         monitor=monitor_var.get(),
+                         ocr=ocr_var.get()),
                banner_state="unknown", stoppable=True)
 
     def pick_and_run(subcommand):
@@ -169,6 +235,40 @@ def run_gui(args) -> int:
     tools.add_separator()
     tools.add_command(label="Match text...", command=run_match)
     menubar.add_cascade(label="Tools", menu=tools)
+
+    def ask_monitor():
+        answer = simpledialog.askstring(
+            "Monitor", "Monitor to capture (a number, or 'auto' to find "
+            "the Dota 2 window):", initialvalue=monitor_var.get(),
+            parent=root)
+        if answer is not None and answer.strip():
+            monitor_var.set(answer.strip())
+
+    play_menu = tk.Menu(menubar, tearoff=0)
+    play_menu.add_checkbutton(label="Auto-click PLAY / PLAY AGAIN",
+                              variable=auto_start_var)
+    play_menu.add_checkbutton(label="Keep running after game over",
+                              variable=keep_var)
+    play_menu.add_separator()
+    play_menu.add_checkbutton(label="Safe mode (never type unmatched OCR)",
+                              variable=safe_var)
+    play_menu.add_checkbutton(label="Auto colour calibration",
+                              variable=color_var)
+    play_menu.add_checkbutton(label="Locate panel on screen",
+                              variable=locate_var)
+    play_menu.add_checkbutton(label="Voice-line phrase corpus",
+                              variable=phrases_var)
+    play_menu.add_checkbutton(label="Debug detail in activity/log",
+                              variable=debug_var)
+    play_menu.add_separator()
+    play_menu.add_command(label="Monitor...", command=ask_monitor)
+    ocr_menu = tk.Menu(play_menu, tearoff=0)
+    for backend_name in ("auto", "rapidocr", "tesseract"):
+        ocr_menu.add_radiobutton(label=backend_name, variable=ocr_var,
+                                 value=backend_name)
+    play_menu.add_cascade(label="OCR backend", menu=ocr_menu)
+    menubar.add_cascade(label="Options", menu=play_menu)
+
     view = tk.Menu(menubar, tearoff=0)
     view.add_checkbutton(label="Show activity", variable=feed_visible,
                          command=toggle_feed)

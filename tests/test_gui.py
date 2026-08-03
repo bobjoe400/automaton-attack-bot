@@ -33,3 +33,43 @@ def test_unremarkable_lines_update_nothing():
 def test_display_text_strips_the_log_timestamp():
     assert display_text("[  12.34s] --- playing ---") == "--- playing ---"
     assert display_text("no timestamp here") == "no timestamp here"
+
+
+# -- play option parity ------------------------------------------------------
+def test_default_panel_settings_produce_a_plain_run():
+    from automaton_attack_bot.gui.app import play_argv
+
+    assert play_argv() == ["--rounds", "1"]
+
+
+def test_every_panel_option_maps_to_its_flag():
+    from automaton_attack_bot.gui.app import play_argv
+
+    argv = play_argv(dry_run=True, rounds=3, max_wpm=300, auto_start=False,
+                     keep_running=True, safe_mode=True, auto_color=False,
+                     locate_panel=False, phrases=False, debug=True,
+                     monitor="2", ocr="tesseract")
+    assert argv == ["--rounds", "3", "--dry-run", "--max-wpm", "300",
+                    "--no-auto-start", "--keep-running", "--safe-mode",
+                    "--no-auto-color", "--no-locate-panel", "--no-phrases",
+                    "--debug", "--monitor", "2", "--ocr", "tesseract"]
+
+
+def test_panel_argv_always_parses_with_the_real_cli():
+    """The parity guarantee: whatever the panel builds, the terminal
+    parser accepts -- the two entrances cannot drift apart."""
+    from automaton_attack_bot.cli import build_parser
+    from automaton_attack_bot.gui.app import play_argv
+
+    parser = build_parser()
+    for argv in (play_argv(),
+                 play_argv(dry_run=True, max_wpm=450.0, monitor="3",
+                           ocr="rapidocr", safe_mode=True, debug=True,
+                           auto_start=False, keep_running=True,
+                           auto_color=False, locate_panel=False,
+                           phrases=False, rounds=9)):
+        args = parser.parse_args(argv)
+        assert args.command is None
+    assert args.rounds == 9
+    assert args.max_wpm == 450.0
+    assert args.monitor == "3"
