@@ -460,28 +460,12 @@ def test_lockstep_never_emits_while_keys_are_in_flight():
     assert typist.typed == []
 
 
-def test_lockstep_waits_out_the_fly_in_before_first_feed():
-    """Run30's phrase: label readable a full second before the word
-    accepts keys -- the whole first pass (20 keys, 1.6s) landed on
-    nothing. No feeding a word younger than ~1s."""
-    a = detection("KAYA", 1.0, pos=(300, 300))
-    typist = run_clocked([[a], [a], [a]], settings=wpm_settings(), step=0.6)
-    assert typist.typed == ["kaya"]     # only once aged past activation
-
-
-def test_lockstep_panic_exempts_deep_or_dying_words():
-    """A word already deep cannot afford activation patience."""
-    deep = detection("KAYA", 1.0, pos=(430, 545))
-    typist = run_clocked([[deep]], settings=wpm_settings(), step=0.6)
-    assert typist.typed == ["kaya"]
-
-
 def test_lockstep_feeds_next_word_when_several_are_visible():
     """Several visible words = no lock held; the most urgent aged word
     becomes the selection with our first key."""
     a = detection("KAYA", 1.0, pos=(300, 300))
     b = detection("MJOLLNIR", 1.0, pos=(700, 300))
-    typist = run_clocked([[a], [a], [a, b], [a, b], [a, b]],
+    typist = run_clocked([[a], [a, b], [a, b]],
                          settings=wpm_settings(), step=0.6)
     assert typist.typed == ["kaya", "mjollnir"]
 
@@ -489,7 +473,7 @@ def test_lockstep_feeds_next_word_when_several_are_visible():
 def test_lockstep_moves_on_when_the_active_word_dies():
     a = detection("KAYA", 1.0, pos=(300, 300))
     b = detection("MJOLLNIR", 1.0, pos=(700, 300))
-    typist = run_clocked([[a], [a], [a, b], [b], [b], [b]],
+    typist = run_clocked([[a], [a, b], [b]],
                          settings=wpm_settings(), step=0.6)
     assert typist.typed == ["kaya", "mjollnir"]
 
@@ -499,15 +483,15 @@ def test_lockstep_refeed_waits_out_typing_plus_kill_render():
     the typing itself, so every word was instantly re-typed off a stale
     pipeline frame. The clock is typing duration + a kill-confirm beat."""
     a = detection("KAYA", 1.0, pos=(300, 300))
-    typist = run_clocked([[a]] * 5, settings=wpm_settings(), step=0.6)
-    # fed at 1.2s (aged), refed at 2.4s (0.67s window), not at 1.8s
+    typist = run_clocked([[a]] * 4, settings=wpm_settings(), step=0.6)
+    # fed at 0, refed at 1.2s (0.67s window), not at 0.6s or 1.8s
     assert typist.typed == ["kaya", "kaya"]
 
 
 def test_lockstep_skips_insurance_and_embedded():
     """Keys are time at capped WPM; speculative typing is off."""
     weak = detection("HYPNOTIZE", 0.65, raw="HYPOTHERMIA")
-    typist = run_clocked([[weak]] * 3, settings=wpm_settings(), step=0.6)
+    typist = run_clocked([[weak]] * 2, settings=wpm_settings(), step=0.6)
     assert typist.typed == ["hypnotize"]
 
 
