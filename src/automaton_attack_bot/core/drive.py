@@ -38,6 +38,7 @@ def drive(frames, lexicon, backend, settings, typist, *,
 
         worker = TypingWorker(typist, engine._urgency, on_typed=emit)
         engine.dispatch = worker.submit
+        engine.queue_keystrokes = worker.pending_keystrokes
         worker.start()
         # Detection is pipelined: while one scan's OCR runs, the next
         # frame's starts. Decisions stay strictly ordered (the confirmer's

@@ -405,3 +405,29 @@ def test_replay_ttls_disable_the_danger_retype():
     deep = detection("WRAITH KING", 1.0, pos=(430, 545))
     typist = run_clocked([[deep], [deep]], settings=settings, step=0.5)
     assert typist.typed == ["wraithking"]
+
+
+def test_throttled_typing_does_not_double_type():
+    """Run25 at 100 WPM: nearly every word typed TWICE. A capped word is
+    still being typed when the instant-typing dedup window expires, so
+    the window stretches by the word's own service time."""
+    data = Settings().to_dict()
+    data["behaviour"]["max_wpm"] = 100.0
+    settings = Settings.from_dict(data)
+    deep = detection("SKULL BASHER", 1.0, pos=(430, 545))
+    typist = run_clocked([[deep], [deep]], settings=settings, step=0.5)
+    assert typist.typed == ["skullbasher"]
+
+
+def test_keyboard_backlog_stretches_the_window_too():
+    """A word behind a deep queue has not even STARTED typing when the
+    base window expires."""
+    data = Settings().to_dict()
+    data["behaviour"]["max_wpm"] = 100.0
+    settings = Settings.from_dict(data)
+    detector = FakeDetector([], settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    engine.queue_keystrokes = lambda: 40        # 40 keys * 0.12s = 4.8s
+    deep = detection("AXE", 1.0, pos=(430, 545))
+    assert engine._dedup_ttl(deep) > 4.8

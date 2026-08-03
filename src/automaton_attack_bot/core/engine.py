@@ -151,6 +151,10 @@ class Engine:
         # never blocks on the keyboard.
         self.dispatch: Callable[[TypedWord], None] = (
             lambda word: self.typist.type(word.keystrokes))
+        # The keyboard's backlog in keystrokes; live mode wires this to
+        # TypingWorker.pending_keystrokes so dedup windows can stretch by
+        # the real service time (see _dedup_ttl).
+        self.queue_keystrokes: Callable[[], int] = lambda: 0
 
     # Where Hoodwink stands, in panel fractions: words die when their
     # automaton reaches this point, so distance to it is time-to-live.
@@ -187,22 +191,32 @@ class Engine:
     DANGER_BAND = 0.55
     DANGER_RETYPE_TTL = 0.4
 
+    def _char_seconds(self) -> float:
+        """Seconds one keystroke takes under the current speed settings."""
+        wpm = self.settings.behaviour.max_wpm
+        return 60.0 / (wpm * 5.0) if wpm > 0 else self.SECONDS_PER_KEY
+
     def _dedup_ttl(self, detection: Detection) -> float | None:
-        """Shorter dedup window for words deep in the panel (live only:
-        on tape typed words never vanish, so replays -- which floor the
-        TTL at 3.0 -- must not rapid-fire retypes).
+        """Retype window for a typed word that is still visible (live
+        only: on tape typed words never vanish, so replays -- which floor
+        the TTL at 3.0 -- must not rapid-fire retypes).
 
         A typed word still visible is still ALIVE -- a killed word
-        vanishes instantly, points and all (the number under a label is
-        its value, not an award; a mistaken 'completion display' theory
-        briefly gated this on sinking and cost LEGION COMMANDER 1.6
-        extra seconds while it rose with eaten keys). Direction does not
-        matter: bottom-spawned words rise toward the platform."""
+        vanishes instantly, points and all. Deep words get the short
+        danger window. Both windows stretch by the keyboard's service
+        time (queue backlog plus this word's own keystrokes): with
+        --max-wpm a word is still being TYPED long after submission, and
+        the instant-typing assumption double-queued nearly every word of
+        a 100-WPM round while real words waited 4s."""
         if self.settings.behaviour.dedup_ttl > 2.0:
             return None
         panel_h = self.settings.geometry.panel_size[1]
         bottom = (detection.box[1] + detection.box[3]) / panel_h
-        return self.DANGER_RETYPE_TTL if bottom >= self.DANGER_BAND else None
+        base = (self.DANGER_RETYPE_TTL if bottom >= self.DANGER_BAND
+                else self.settings.behaviour.dedup_ttl)
+        own = len(detection.match.keystrokes) if detection.match else 0
+        service = (self.queue_keystrokes() + own) * self._char_seconds()
+        return base + service
 
     def _group_stacks(self, detections: list[Detection]) -> list[Detection]:
         """Tag vertically-adjacent, horizontally-overlapping labels as one

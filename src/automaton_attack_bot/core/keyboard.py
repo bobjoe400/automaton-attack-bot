@@ -132,6 +132,19 @@ class TypingWorker(threading.Thread):
         self._pending: list[tuple[object, float]] = []
         self._condition = threading.Condition()
         self._stopped = False
+        self._typing_keys = 0   # keystrokes of the word being typed now
+
+    def pending_keystrokes(self) -> int:
+        """Keystrokes queued plus in-progress -- the keyboard's backlog.
+
+        The engine stretches its dedup windows by this backlog's service
+        time: with --max-wpm a word is still being typed long after it
+        was submitted, and treating it as 'typed but still visible'
+        double-queued nearly every word of a throttled round.
+        """
+        with self._condition:
+            queued = sum(len(w.keystrokes) for w, _ in self._pending)
+        return queued + self._typing_keys
 
     def submit(self, word) -> None:
         with self._condition:
@@ -178,7 +191,11 @@ class TypingWorker(threading.Thread):
             if self._triage(word):
                 self.dropped_triage += 1
                 continue
-            self.typist.type(word.keystrokes)
+            self._typing_keys = len(word.keystrokes)
+            try:
+                self.typist.type(word.keystrokes)
+            finally:
+                self._typing_keys = 0
             if self.on_typed:
                 self.on_typed(word, waited)
 

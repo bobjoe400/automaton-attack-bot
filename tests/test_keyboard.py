@@ -153,3 +153,15 @@ def test_default_origin_leaves_clicks_untouched():
     typist = DryRunTypist()
     typist.click(965, 979)
     assert typist.clicked == [(965, 979)]
+
+
+def test_pending_keystrokes_counts_the_queue():
+    from automaton_attack_bot.core.engine import TypedWord
+    from automaton_attack_bot.core.keyboard import TypingWorker
+
+    worker = TypingWorker(typist=None, urgency=lambda d: 0)
+    word = lambda keys: TypedWord(0.0, None, keys)  # noqa: E731
+    worker.submit(word("skullbasher"))
+    worker.submit(word("axe"))
+    worker.submit(word("axe"))          # duplicate keystrokes: not queued
+    assert worker.pending_keystrokes() == len("skullbasher") + len("axe")
