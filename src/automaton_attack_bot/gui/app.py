@@ -1,10 +1,10 @@
 """The control panel window.
 
-Layout: menubar (tools live there), status banner, stat cards, big
-Start/Stop, and a one-line last-event strip. The full activity feed is a
-View-menu toggle -- most sessions never need it, and everything important
-already surfaces in the banner and cards. All actual work happens in
-:class:`tasks.TaskRunner`.
+Layout: menubar (tools and options live there), status banner, stat
+cards, big Start/Stop, and a status bar of translated UI elements -- a
+curated friendly message plus a capture-info chip, never raw log lines.
+The raw activity feed is a View-menu toggle for debugging. All actual
+work happens in :class:`tasks.TaskRunner`.
 """
 
 from __future__ import annotations
@@ -12,7 +12,8 @@ from __future__ import annotations
 import queue
 
 from .. import __version__
-from .feed import STATES, display_text, interpret
+from .feed import (STATES, display_text, interpret, log_path,
+                   session_info, status_message)
 from .tasks import TaskRunner
 
 _POLL_MS = 100
@@ -136,10 +137,19 @@ def run_gui(args) -> int:
     monitor_var = tk.StringVar(value=str(getattr(args, "monitor", "auto")))
     ocr_var = tk.StringVar(value=getattr(args, "ocr", "auto"))
 
-    # -- last event + optional activity feed -------------------------------
-    last_event = tk.Label(root, text="Ready.", anchor="w", fg="#777777",
-                          font=("Consolas", 9), padx=12)
-    last_event.pack(fill="x", pady=(0, 6))
+    # -- status bar + optional activity feed -------------------------------
+    # Friendly, curated status -- never raw log lines, and wrap-capped so
+    # a long message can never widen the window.
+    status_bar = ttk.Frame(root, padding=(12, 0))
+    status_bar.pack(fill="x", pady=(0, 6))
+    status_label = tk.Label(status_bar, text="Ready.", anchor="w",
+                            fg="#666666", font=("Segoe UI", 10),
+                            wraplength=380, justify="left")
+    status_label.pack(side="left", fill="x", expand=True)
+    info_label = tk.Label(status_bar, text="", anchor="e", fg="#999999",
+                          font=("Segoe UI", 9))
+    info_label.pack(side="right")
+    session_log = {"path": None}
 
     feed_frame = ttk.LabelFrame(root, text="Activity", padding=(4, 2))
     feed_view = ScrolledText(feed_frame, height=12, state="disabled",
@@ -160,11 +170,19 @@ def run_gui(args) -> int:
 
     def append(text):
         shown = display_text(text)
-        last_event.config(text=shown)
         feed_view["state"] = "normal"
         feed_view.insert("end", shown + "\n")
         feed_view.see("end")
         feed_view["state"] = "disabled"
+        status = status_message(text)
+        if status:
+            status_label.config(text=status)
+        info = session_info(text)
+        if info:
+            info_label.config(text=info)
+        found_log = log_path(text)
+        if found_log:
+            session_log["path"] = found_log
 
     def set_running(running, stoppable=False):
         start_btn["state"] = "disabled" if running else "normal"
@@ -269,9 +287,16 @@ def run_gui(args) -> int:
     play_menu.add_cascade(label="OCR backend", menu=ocr_menu)
     menubar.add_cascade(label="Options", menu=play_menu)
 
+    def open_session_log():
+        if session_log["path"]:
+            import os
+
+            os.startfile(session_log["path"])   # noqa: S606 - user's own log
+
     view = tk.Menu(menubar, tearoff=0)
     view.add_checkbutton(label="Show activity", variable=feed_visible,
                          command=toggle_feed)
+    view.add_command(label="Open session log", command=open_session_log)
     menubar.add_cascade(label="View", menu=view)
     root.config(menu=menubar)
 

@@ -73,3 +73,38 @@ def test_panel_argv_always_parses_with_the_real_cli():
     assert args.rounds == 9
     assert args.max_wpm == 450.0
     assert args.monitor == "3"
+
+
+# -- status translation ------------------------------------------------------
+def test_meaningful_lines_translate_to_friendly_status():
+    from automaton_attack_bot.gui.feed import status_message
+
+    assert status_message("[   2.76s] --- start-screen ---") \
+        == "Start screen found"
+    assert status_message("[   2.76s] clicking PLAY at (1275, 1184)") \
+        == "Clicking PLAY"
+    assert status_message("[  36.55s] !!! COMBO LOST x3.0 -> x2.0") \
+        == "Combo lost!"
+    assert status_message("[  67.43s] GAME OVER -- total score: 32140") \
+        == "Round over -- score 32140"
+    assert status_message("!!! capture stalled (frozen frames) -- x") \
+        == "Capture stalled -- recovering"
+
+
+def test_noise_lines_leave_the_status_alone():
+    from automaton_attack_bot.gui.feed import status_message
+
+    assert status_message("[  20.10s] combo x2.5, clock 0:41") is None
+    assert status_message("55 words typed over 812 scans") is None
+    assert status_message("random chatter") is None
+
+
+def test_capture_line_becomes_the_info_chip():
+    from automaton_attack_bot.gui.feed import log_path, session_info
+
+    line = ("Live capture on monitor 3 (2560x1440), OCR=rapidocr x8. "
+            "TYPING ENABLED.")
+    assert session_info(line) == "monitor 3 · 2560x1440 · rapidocr"
+    assert session_info("combo x2.0") is None
+    assert log_path("Session log (full detail): logs\run-1.log") \
+        == "logs\run-1.log"
