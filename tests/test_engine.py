@@ -378,14 +378,26 @@ def run_clocked(frames, settings=None, step=0.5):
     return typist
 
 
-def test_a_deep_word_that_would_not_die_retypes_fast():
+def test_a_deep_sinking_word_that_would_not_die_retypes_fast():
     """WRAITH KING was typed at depth 0.55, its keys eaten by the bundle
     above, and the 1.2s dedup window let it sink to 0.68 before the
-    retype landed. A typed word still visible in the danger band retries
-    on a much shorter clock."""
-    deep = detection("WRAITH KING", 1.0, pos=(430, 545))    # bottom ~0.585
-    typist = run_clocked([[deep], [deep]], step=0.5)
+    retype landed. A typed word still visible AND SINKING in the danger
+    band retries on a much shorter clock."""
+    typed_at = detection("WRAITH KING", 1.0, pos=(430, 545))  # bottom ~0.585
+    sunk = detection("WRAITH KING", 1.0, pos=(432, 575))
+    typist = run_clocked([[typed_at], [sunk]], step=0.5)
     assert typist.typed == ["wraithking", "wraithking"]
+
+
+def test_a_rising_completion_ghost_is_not_retyped():
+    """A killed word's completion display lingers ~3s in place and floats
+    UP as it fades -- same name, same spot, danger depth. LEGION
+    COMMANDER's ghost got re-typed a second after its kill; rising means
+    ghost, and the fast clock must not apply."""
+    typed_at = detection("LEGION COMMANDER", 1.0, pos=(222, 643))
+    ghost = detection("LEGION COMMANDER", 1.0, pos=(236, 613))   # risen
+    typist = run_clocked([[typed_at], [ghost]], step=0.5)
+    assert typist.typed == ["legioncommander"]
 
 
 def test_a_shallow_word_keeps_the_calm_dedup_window():
