@@ -204,7 +204,7 @@ class ReadLog:
             stable = sum(1 for e in self.episodes if e.sightings >= 2)
             lines.append(
                 f"\nWord screen time: {stable} words, average "
-                f"{average:.2f}s (includes the ~2s completion display).")
+                f"{average:.2f}s alive.")
             if slow:
                 lines.append("On screen well beyond average:")
                 for e in slow:

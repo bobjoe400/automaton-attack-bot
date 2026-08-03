@@ -362,8 +362,16 @@ def cmd_analyze(args) -> int:
     log = ReadLog()
     detector = None
     tracker = None
+    # A --stride 1 pass over a two-minute recording takes minutes;
+    # narrate progress so nobody has to wonder whether it is alive.
+    total = source.frame_count / (source.fps or 60)
+    next_progress = 0.0
 
     for timestamp, frame in source.frames():
+        if total and timestamp >= next_progress:
+            print(f"  analyzing {timestamp:5.1f}/{total:.1f}s "
+                  f"({100 * timestamp / total:.0f}%)", flush=True)
+            next_progress += max(10.0, total / 10)
         if detector is None:
             panel = None if args.no_locate_panel else locate_panel(frame)
             if panel:
