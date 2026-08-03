@@ -34,7 +34,14 @@ def drive(frames, lexicon, backend, settings, typist, *,
         from .keyboard import TypingWorker
 
         def emit(word, waited):
-            LOG.trace(describe(word) + f"  [queued {waited:.2f}s]")
+            line = describe(word) + f"  [queued {waited:.2f}s]"
+            key_times = getattr(typist, "last_key_times", None)
+            if key_times:
+                deltas = " ".join(f"+{b - a:.3f}" for a, b in
+                                  zip(key_times, key_times[1:]))
+                line += (f"  [keys mono={key_times[0]:.3f}"
+                         + (f" {deltas}" if deltas else "") + "]")
+            LOG.trace(line)
 
         worker = TypingWorker(typist, engine._urgency, on_typed=emit)
         engine.dispatch = worker.submit

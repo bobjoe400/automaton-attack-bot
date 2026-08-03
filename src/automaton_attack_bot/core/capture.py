@@ -172,6 +172,10 @@ class ScreenSource:
         state = {"seq": 0, "timestamp": 0.0, "frame": None, "stop": False}
         condition = threading.Condition()
         start = time.monotonic()
+        # Scan timestamps are relative to this; logging it makes every
+        # [keys mono=...] entry convertible to scan time exactly.
+        from ..logbook import LOG
+        LOG.trace(f"capture epoch: monotonic {start:.3f} = t 0.000")
 
         def producer() -> None:
             try:

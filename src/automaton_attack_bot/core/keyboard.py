@@ -33,8 +33,11 @@ class DryRunTypist:
         self.origin = origin
         self.typed: list[str] = []
         self.clicked: list[tuple[int, int]] = []
+        self.last_key_times: list[float] = []
 
     def type(self, text: str) -> None:
+        now = time.monotonic()
+        self.last_key_times = [now] * len(text)
         self.typed.append(text)
 
     def click(self, x: int, y: int) -> None:
@@ -64,6 +67,9 @@ class DirectInputTypist:
         self.origin = origin
         self.typed: list[str] = []
         self.clicked: list[tuple[int, int]] = []
+        # Monotonic send time of every key of the last word, recorded at
+        # keyDown -- the audit trail for keystroke-level forensics.
+        self.last_key_times: list[float] = []
         self._min_seconds_per_char = self._pace()
 
     def _pace(self) -> float:
@@ -88,9 +94,11 @@ class DirectInputTypist:
         keeps the plain tap: burst input lands, and the records were
         set with it.
         """
+        key_times = []
         for char in text:
             delay = max(random.uniform(*self.behaviour.key_delay),
                         self._min_seconds_per_char)
+            key_times.append(time.monotonic())
             if delay > 0:
                 hold = min(0.05, delay * 0.4)
                 self._pydirectinput.keyDown(char)
@@ -99,6 +107,7 @@ class DirectInputTypist:
                 time.sleep(max(0.0, delay - hold))
             else:
                 self._pydirectinput.press(char)
+        self.last_key_times = key_times
         self.typed.append(text)
 
     def click(self, x: int, y: int) -> None:
