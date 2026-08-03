@@ -161,6 +161,13 @@ class Engine:
         # TypingWorker.pending_keystrokes so dedup windows can stretch by
         # the real service time (see _dedup_ttl).
         self.queue_keystrokes: Callable[[], int] = lambda: 0
+        # In-flight introspection/abort, wired to the TypingWorker in
+        # live mode: a word only accepts keys while its label is
+        # rendered, so when the target vanishes mid-word the rest of its
+        # keystrokes are cancelled instead of ghosted.
+        self.inflight_name: Callable[[], str | None] = lambda: None
+        self.cancel_inflight: Callable[[], None] = lambda: None
+        self._inflight_misses = 0
         # Live age ledger: when each on-screen word was first read. Words
         # live ~3.5s from first readable label to the platform no matter
         # their path -- an arcing word looks geometrically safe at its
@@ -243,9 +250,17 @@ class Engine:
         Insurance and embedded side-typing stay off here: they assume
         wrong keys are free, and at capped WPM keys are time.
         """
-        if self.queue_keystrokes() > 0:
-            return []
         matched = [d for d in detections if d.match]
+        if self.queue_keystrokes() > 0:
+            inflight = self.inflight_name()
+            if inflight and all(d.name != inflight for d in matched):
+                self._inflight_misses += 1
+                if self._inflight_misses >= 2:    # debounce OCR flicker
+                    self.cancel_inflight()
+            else:
+                self._inflight_misses = 0
+            return []
+        self._inflight_misses = 0
         sole = matched[0] if len(matched) == 1 else None
         for detection in matched:
             if detection is sole:

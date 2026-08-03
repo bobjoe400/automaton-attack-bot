@@ -75,3 +75,37 @@ def test_lingerers_flags_the_outlier():
     average, slow = log.lingerers()
     assert [e.name for e in slow] == ["LEGION COMMANDER"]
     assert average < 2.0 < slow[0].duration
+
+
+# -- keystroke audit ---------------------------------------------------------
+def test_audit_judge_marks_landed_and_ghost_keys():
+    from automaton_attack_bot.audit import KeyedWord, judge
+
+    word = KeyedWord("KAYA", keys=[10.0, 10.1, 10.2, 10.3])
+    # progress rises through the first keys then flattens; the windows
+    # overlap adjacent keys by design (empirically calibrated on run31),
+    # so the last flat key is the unambiguous ghost
+    word.progress = [(9.85, 0.0), (10.05, 0.3), (10.15, 0.6),
+                     (10.28, 0.6), (10.42, 0.6)]
+    assert judge(word) == "+++."
+
+
+def test_audit_parse_log_reads_ledger_epoch_and_rounds(tmp_path):
+    from automaton_attack_bot.audit import parse_log
+
+    log = tmp_path / "run.log"
+    log.write_text(
+        "capture epoch: monotonic 1000.000 = t 0.000\n"
+        "Located minigame panel at (473, 52, 1447, 1024) "
+        "(configured geometry re-anchored).\n"
+        "[   1.00s] --- playing ---\n"
+        "    ( 100, 200) ocr='KAYA' -> KAYA (1.00)\n"
+        "[   2.00s] KAYA         vocab    score=1.00 ocr='KAYA'  "
+        "[queued 0.00s]  [keys mono=1002.000 +0.100 +0.100 +0.100]\n"
+        "[  60.00s] --- game-over ---\n", encoding="utf-8")
+    ledger = parse_log(str(log))
+    assert ledger.rounds == [(1.0, 60.0)]
+    assert len(ledger.words) == 1
+    assert ledger.words[0].keys[0] == 2.0        # mono 1002 - epoch 1000
+    assert abs(ledger.words[0].keys[-1] - 2.3) < 1e-9
+    assert ledger.traces["KAYA"] == [(1.0, 100, 200)]

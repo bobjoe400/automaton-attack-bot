@@ -97,10 +97,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze = subs.add_parser(
         "analyze",
-        help="replay a recording and report reads that look like misses")
+        help="replay a recording: misses, screen time, and -- when the "
+             "session log is available -- a keystroke-by-keystroke audit")
     analyze.add_argument("clip", help="path to a video file")
     analyze.add_argument("--stride", type=int,
                          help="scan every Nth frame (default: 15)")
+    analyze.add_argument("--log", metavar="PATH",
+                         help="session log with keystroke ledger for the "
+                              "audit (default: newest logs/run-*.log)")
+    analyze.add_argument("--round", type=int, dest="round_index",
+                         help="which round of the log the clip shows "
+                              "(default: match by duration)")
     _add_common(analyze)
 
     gui = subs.add_parser(
@@ -404,6 +411,21 @@ def cmd_analyze(args) -> int:
 
     print()
     print(log.report())
+
+    # -- keystroke audit (needs the session log's key ledger) -------------
+    from .audit import run_audit
+
+    log_path = args.log
+    if not log_path:
+        runs = sorted(Path("logs").glob("run-*.log"))
+        log_path = str(runs[-1]) if runs else None
+    if log_path:
+        print(f"\nKeystroke audit against {log_path}:")
+        try:
+            print(run_audit(args.clip, log_path,
+                            round_index=args.round_index))
+        except (ValueError, RuntimeError) as exc:
+            print(f"  (skipped: {exc})")
     return 0
 
 
