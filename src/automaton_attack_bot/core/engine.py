@@ -207,9 +207,13 @@ class Engine:
     # don't match it (run27 frame-by-frame: MJOLLNIR's entire first
     # typing ran during BUTTERFLY's lock -- every key wasted, audibly).
     LOCKSTEP_THRESHOLD = 0.02
-    # Re-feed clock for the game's selected word (the sole visible one)
-    # while it survives our keystrokes.
-    ACTIVE_RETRY = 0.30
+    # After the selected word's keystrokes END, wait this long for the
+    # kill to render and reach us through the scan pipeline before
+    # concluding it survived. Run30: the refeed clock ran from EMIT, so
+    # every word longer than it was instantly re-typed off a stale
+    # pipeline frame the moment the keyboard went idle -- 17 of 49
+    # words double-typed, ~190 ghost keys, 44% overhead.
+    KILL_CONFIRM = 0.35
 
     def _process_lockstep(self, timestamp: float,
                           detections: list[Detection]) -> list[TypedWord]:
@@ -238,8 +242,11 @@ class Engine:
         matched = [d for d in detections if d.match]
         sole = matched[0] if len(matched) == 1 else None
         for detection in matched:
-            ttl = (self.ACTIVE_RETRY if detection is sole
-                   else self._dedup_ttl(detection))
+            if detection is sole:
+                own = len(detection.match.keystrokes)
+                ttl = own * self._char_seconds() + self.KILL_CONFIRM
+            else:
+                ttl = self._dedup_ttl(detection)
             if self.deduper.seen(detection.name, detection.pos, ttl=ttl):
                 self.stats.suppressed_duplicate += 1
                 continue

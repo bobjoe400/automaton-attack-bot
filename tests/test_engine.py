@@ -476,13 +476,14 @@ def test_lockstep_moves_on_when_the_active_word_dies():
     assert typist.typed == ["kaya", "mjollnir"]
 
 
-def test_lockstep_refeeds_the_sole_visible_word_fast():
-    """Exactly one visible word IS the game's selection: while it
-    survives our keystrokes it needs more of them, on a short clock --
-    a full retype's tail completes it wherever its progress stands."""
+def test_lockstep_refeed_waits_out_typing_plus_kill_render():
+    """Run30 ghost letters: the refeed clock ran from EMIT, shorter than
+    the typing itself, so every word was instantly re-typed off a stale
+    pipeline frame. The clock is typing duration + a kill-confirm beat:
+    KAYA (0.32s of keys) must NOT refeed at 0.5s, must at 1.0s."""
     a = detection("KAYA", 1.0, pos=(300, 300))
     typist = run_clocked([[a], [a], [a]], settings=wpm_settings(), step=0.5)
-    assert typist.typed == ["kaya", "kaya", "kaya"]
+    assert typist.typed == ["kaya", "kaya"]
 
 
 def test_lockstep_skips_insurance_and_embedded():
