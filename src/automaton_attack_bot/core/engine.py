@@ -70,6 +70,11 @@ class Stats:
 class Deduper:
     """Suppresses a word recently typed at roughly the same position."""
 
+    # Entries must outlive the longest override window a caller may ask
+    # for (service-stretched and lock-step windows exceed the base ttl);
+    # pruning at base ttl silently disabled every longer window.
+    RETENTION = 8.0
+
     def __init__(self, radius: int = 120, ttl: float = 3.0,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self.radius = radius
@@ -80,9 +85,10 @@ class Deduper:
     def seen(self, name: str, pos: tuple[int, int],
              ttl: float | None = None) -> bool:
         """``ttl`` overrides the configured window for this check only --
-        the engine shortens it for words deep in the panel."""
+        the engine stretches or shortens it per word."""
         now = self.clock()
-        self._entries = [e for e in self._entries if now - e[2] < self.ttl]
+        retention = max(self.RETENTION, self.ttl)
+        self._entries = [e for e in self._entries if now - e[2] < retention]
         window = self.ttl if ttl is None else ttl
         for entry_name, entry_pos, marked in self._entries:
             if entry_name != name:
@@ -214,6 +220,12 @@ class Engine:
     # pipeline frame the moment the keyboard went idle -- 17 of 49
     # words double-typed, ~190 ghost keys, 44% overhead.
     KILL_CONFIRM = 0.35
+    # A word's label renders and OCRs ~1s before the word accepts keys
+    # (fly-in): run30's AXE LIKES phrase was readable at 22.0, its
+    # tracker appeared at 23.1 with ZERO progress, and the entire first
+    # pass -- 20 keys, 1.6s at 150 WPM -- landed on nothing. Don't feed
+    # a word younger than this unless it is deep or dying.
+    ACTIVATION_AGE = 0.95
 
     def _process_lockstep(self, timestamp: float,
                           detections: list[Detection]) -> list[TypedWord]:
@@ -241,7 +253,13 @@ class Engine:
             return []
         matched = [d for d in detections if d.match]
         sole = matched[0] if len(matched) == 1 else None
+        panel_h = self.settings.geometry.panel_size[1]
         for detection in matched:
+            age = self.WORD_LIFETIME - self._time_left(detection)
+            bottom = (detection.box[1] + detection.box[3]) / panel_h
+            if (age < self.ACTIVATION_AGE and bottom < self.DANGER_BAND
+                    and self._time_left(detection) > 1.5):
+                continue    # still flying in; keys would land on nothing
             if detection is sole:
                 own = len(detection.match.keystrokes)
                 ttl = own * self._char_seconds() + self.KILL_CONFIRM
