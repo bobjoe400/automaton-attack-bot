@@ -206,17 +206,18 @@ def test_pick_monitor_with_no_overlap_returns_none():
     assert pick_monitor((-5000, -5000, -4000, -4000), monitors) is None
 
 
-def test_words_nearest_the_platform_type_first():
-    """Automatons converge on Hoodwink at panel-centre; the word about to
-    reach her must not wait behind a fresh spawn. Spawns from below start
-    close to the platform (but above the strike band -- anything below
-    that is already dead). Horizontally separate: overlapping labels
-    would be a bundle and type top-first instead."""
-    far_top = detection("BANE", 1.0, pos=(60, 40))
-    near_platform = detection("PUDGE", 1.0, pos=(430, 500))
-    below_spawn = detection("LINA", 1.0, pos=(500, 650))
-    typed, typist, _ = run_engine([[far_top, near_platform, below_spawn]])
-    assert typist.typed == ["lina", "pudge", "bane"]
+def test_older_words_type_first():
+    """Position without motion says almost nothing (trajectory speed
+    varies with spawn height); the ledger's clocks -- age and measured
+    velocity -- are the urgency signal. Oldest first."""
+    settings = Settings()
+    engine = Engine(FakeDetector([], settings), DryRunTypist(), settings)
+    old = detection("BANE", 1.0, pos=(60, 40))
+    young = detection("PUDGE", 1.0, pos=(430, 500))
+    engine.queue_keystrokes = lambda: 5
+    engine.process_detections(0.0, [old])
+    engine.process_detections(1.5, [old, young])
+    assert engine._urgency(old) < engine._urgency(young)
 
 
 # -- verbatim insurance ------------------------------------------------------
@@ -329,13 +330,13 @@ def test_stacks_type_top_first_regardless_of_range():
     assert typist.typed == ["marci", "bane", "pudge"]
 
 
-def test_a_stack_uses_the_piles_deadline_not_each_words():
-    """Stack members fall together; the pile's top word must not wait
-    behind a lone word that is farther out."""
-    group = (430, 560, 140, 60)      # pile right by the platform
+def test_a_stack_orders_by_rank_at_equal_age():
+    """Same-scan stack members and lone words tie on age; the rank
+    penalty keeps piles typing top-first without position mattering."""
+    group = (430, 560, 140, 60)
     pile_top = stacked("LINA", 0, group, (430, 560))
-    lone_far = detection("BANE", 1.0, pos=(60, 40))
-    typed, typist, _ = run_engine([[lone_far, pile_top]])
+    pile_low = stacked("BANE", 1, group, (430, 590))
+    typed, typist, _ = run_engine([[pile_low, pile_top]])
     assert typist.typed[0] == "lina"
 
 
@@ -531,8 +532,8 @@ def test_lockstep_rescues_a_flickered_urgent_word():
     typist = DryRunTypist(settings.behaviour)
     engine = Engine(detector, typist, settings)
     engine.queue_keystrokes = lambda: 5             # keyboard busy: age only
-    engine.process_detections(0.0, [sven, hood])
-    engine.process_detections(2.3, [sven, hood])
+    engine.process_detections(0.0, [sven])
+    engine.process_detections(2.3, [sven, hood])    # hood arrives young
     engine.queue_keystrokes = lambda: 0
     # SVEN (age 2.5, <1.2s left) flickers out of the deciding scan
     out = engine.process_detections(2.5, [hood])

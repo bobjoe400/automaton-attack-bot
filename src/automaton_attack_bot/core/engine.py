@@ -179,10 +179,7 @@ class Engine:
     # strike, starving living words exactly when the combo was rebuilding.
     # (Matches analyze.PLATFORM_BAND.)
     STRIKE_BAND = 0.70
-    # Rough conversion factors for the deadline estimate: automatons cross
-    # about half the panel in a ~4s word lifetime, and a keystroke costs
-    # ~22ms with jitter.
-    APPROACH_SPEED = 0.12       # panel-fractions per second
+    # A keystroke costs ~22ms with jitter at full speed.
     SECONDS_PER_KEY = 0.003     # SendInput overhead; no artificial delay
     # The game only accepts the TOP word of a stacked pile: a lower word's
     # keystrokes do nothing until everything above it has cleared, so its
@@ -413,22 +410,18 @@ class Engine:
         start earlier than a 4-key word at the same range. Two phrases
         died this exact way -- queued behind each other while both fell.
 
-        The deadline is the SOONER of position and age: words live ~3.5s
-        from first readable label no matter the path, and an arcing word
-        reads as geometrically safe at its apex moments before it
-        plummets -- age catches what position cannot.
+        The deadline is what the ledger measured, not where the word
+        happens to hang: lifetime remaining, or the arrival its own
+        velocity predicts -- whichever is sooner. Static
+        distance-to-platform was the term that kept over-prioritising
+        young low words against older doomed ones (LINA, ORACLE, run34)
+        and is gone: trajectory speed varies with spawn height, so
+        position without motion says almost nothing.
 
-        Stacked words use the whole pile's position (they fall together)
-        plus a per-rank delay, so a stack always types top-first: bundles
-        used to linger while we typed their ineligible lower words, then
-        vanish all at once when the retype cycle finally hit the top one.
+        Stacked words carry a per-rank delay so a stack always types
+        top-first: the game only accepts a pile's top word.
         """
-        panel_w, panel_h = self.settings.geometry.panel_size
-        bx, by, bw, bh = detection.group_box or detection.box
-        dx = (bx + bw / 2) / panel_w - self.PLATFORM[0]
-        dy = (by + bh / 2) / panel_h - self.PLATFORM[1]
-        deadline = (dx * dx + dy * dy) ** 0.5 / self.APPROACH_SPEED
-        deadline = min(deadline, self._time_left(detection))
+        deadline = self._time_left(detection)
         keys = len(detection.match.keystrokes) if detection.match else 0
         return (deadline - keys * self.SECONDS_PER_KEY
                 + detection.stack_rank * self.STACK_RANK_DELAY)

@@ -34,12 +34,16 @@ def drain(worker, expected, timeout=3.0):
 
 
 def test_most_urgent_word_types_first():
+    """The worker pops by whatever urgency function it is given -- here
+    a fixed priority map (the engine's real ranking is age/velocity)."""
+    priorities = {"PUDGE": 0, "LINA": 1, "BANE": 2}
     typist = DryRunTypist()
-    worker = TypingWorker(typist, urgency)
+    worker = TypingWorker(typist,
+                          lambda det: priorities.get(det.name, 9))
     # submit before starting so ordering is deterministic
-    worker.submit(word("BANE", (60, 40)))            # far corner
-    worker.submit(word("PUDGE", (430, 580)))         # at the platform
-    worker.submit(word("LINA", (450, 900)))          # bottom spawn
+    worker.submit(word("BANE", (60, 40)))
+    worker.submit(word("PUDGE", (430, 580)))
+    worker.submit(word("LINA", (450, 900)))
     worker.start()
     drain(worker, 3)
     worker.stop()
