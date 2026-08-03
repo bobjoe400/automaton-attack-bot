@@ -537,3 +537,30 @@ def test_lockstep_rescues_a_flickered_urgent_word():
     # SVEN (age 2.5, <1.2s left) flickers out of the deciding scan
     out = engine.process_detections(2.5, [hood])
     assert [w.name for w in out] == ["SVEN"]        # rescue outranks hood
+
+
+def test_garbage_read_does_not_block_the_queue():
+    """Run34 LYCAN/BREWMASTER: the EDF-best candidate was an unstable
+    fallback read; the scheduler returned empty instead of taking the
+    next candidate and froze for seconds. Rule 2: never idle."""
+    junk = detection("XQZWJUNKPHRASE", 0.0, pos=(430, 545),
+                     source="fallback")
+    real = detection("BREWMASTER", 1.0, pos=(700, 300))
+    typist = run_clocked([[junk, real]], settings=wpm_settings(), step=0.5)
+    assert typist.typed == ["brewmaster"]
+
+
+def test_a_measured_diver_outranks_slower_lower_words():
+    """Run34 LINA: dove at ~3x the assumed approach speed and struck at
+    age 3.0 while the position model called her safe. Measured velocity
+    predicts arrival."""
+    settings = wpm_settings()
+    engine = Engine(FakeDetector([], settings), DryRunTypist(), settings)
+    engine.queue_keystrokes = lambda: 5              # observe only
+    diver0 = detection("LINA", 1.0, pos=(600, 150))
+    diver1 = detection("LINA", 1.0, pos=(600, 400))
+    lower = detection("PUGNA", 1.0, pos=(200, 500))
+    engine.process_detections(0.0, [diver0, lower])
+    engine.process_detections(0.7, [diver1, lower])
+    # LINA: vy ~357 px/s, ~0.6s from the platform; PUGNA sits still
+    assert engine._urgency(diver1) < engine._urgency(lower)

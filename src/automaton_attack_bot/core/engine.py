@@ -261,16 +261,18 @@ class Engine:
                 if entry["last"] <= typed_end:
                     continue                # never seen again: presumed dead
             candidates.append((entry, det))
-        if not candidates:
-            return []
-        entry, det = min(candidates, key=lambda c: self._urgency(c[1]))
-        if not self.confirmer.ready(det, timestamp):
-            self.stats.awaiting_confirmation += 1
-            return []
-        entry["typed_end"] = (timestamp
-                             + len(det.match.keystrokes)
-                             * self._char_seconds())
-        return [self._emit(timestamp, det)]                 # rules 2 + 5
+        candidates.sort(key=lambda c: self._urgency(c[1]))
+        for entry, det in candidates:
+            if not self.confirmer.ready(det, timestamp):
+                # an unstable garbage read must not block the queue --
+                # run34 froze on LYCAN/BREWMASTER exactly this way
+                self.stats.awaiting_confirmation += 1
+                continue
+            entry["typed_end"] = (timestamp
+                                 + len(det.match.keystrokes)
+                                 * self._char_seconds())
+            return [self._emit(timestamp, det)]             # rules 2 + 5
+        return []
 
     def _dedup_ttl(self, detection: Detection) -> float | None:
         """Retype window for a typed word that is still visible (live
@@ -366,6 +368,11 @@ class Engine:
                 if (entry["name"] == d.name
                         and abs(entry["pos"][0] - d.pos[0]) < self.AGE_MATCH_RADIUS
                         and abs(entry["pos"][1] - d.pos[1]) < self.AGE_MATCH_RADIUS):
+                    dt = timestamp - entry["last"]
+                    if dt > 0.02:
+                        vy = (d.pos[1] - entry["pos"][1]) / dt
+                        old = entry.get("vy")
+                        entry["vy"] = vy if old is None else 0.6 * old + 0.4 * vy
                     entry["pos"] = d.pos
                     entry["last"] = timestamp
                     entry["det"] = d
@@ -379,12 +386,23 @@ class Engine:
         self._now = timestamp
 
     def _time_left(self, detection: Detection) -> float:
-        """Seconds until this word's lifetime runs out, if we know it."""
+        """Seconds until this word dies, by the SOONEST of two clocks:
+        lifetime (words live ~3.4s) and trajectory (LINA dove at three
+        times the assumed approach speed and struck at age 3.0 while the
+        position model called her safe -- a diver's measured velocity
+        predicts its arrival far better than any constant)."""
         for entry in self._ages:
             if (entry["name"] == detection.name
                     and abs(entry["pos"][0] - detection.pos[0]) < self.AGE_MATCH_RADIUS
                     and abs(entry["pos"][1] - detection.pos[1]) < self.AGE_MATCH_RADIUS):
-                return self.WORD_LIFETIME - (self._now - entry["first"])
+                left = self.WORD_LIFETIME - (self._now - entry["first"])
+                vy = entry.get("vy")
+                if vy is not None and abs(vy) > 30:
+                    platform_y = self.PLATFORM[1] * self.settings.geometry.panel_size[1]
+                    gap = platform_y - entry["pos"][1]
+                    if vy * gap > 0:            # moving toward the platform
+                        left = min(left, max(0.1, gap / vy))
+                return left
         return float("inf")
 
     def _urgency(self, detection: Detection) -> float:
