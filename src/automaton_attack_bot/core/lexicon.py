@@ -80,6 +80,9 @@ class Lexicon:
         phrase_names = [p.upper() for p in phrases]
         self.phrase_names: list[str] = phrase_names
         self.phrase_keys: list[str] = [to_key(p) for p in phrase_names]
+        # split_match costs up to ~170ms against the full phrase corpus,
+        # and a garbled cluster repeats near-identically scan after scan.
+        self._split_cache: dict[str, list[Match]] = {}
 
     # -- construction ----------------------------------------------------
     @classmethod
@@ -231,6 +234,45 @@ class Lexicon:
             if entry_key in key:
                 hits.append(name)
         return hits
+
+    # Halves of a split garble must each clear this score to accept the
+    # split; the vocab floor (0.62) is too generous for fragments.
+    SPLIT_MIN_SCORE = 0.70
+    SPLIT_MIN_LENGTH = 20
+
+    def split_match(self, raw: str) -> list[Match]:
+        """Resolve a two-word horizontal merge into both its words.
+
+        Two labels crossing at the same height OCR as one garble ('YOU
+        WERE TOO NOISY TO LE LIKES F HIS VERY MUCH.' was two phrases), and
+        the cluster stays unreadable for SECONDS while the whole-read
+        matcher finds nothing -- a combo died behind exactly that
+        blindness. Splitting at a middle space and matching each side
+        independently reads the merge the moment it appears. Returns two
+        matches, or nothing."""
+        text = raw.strip()
+        if len(text) < self.SPLIT_MIN_LENGTH:
+            return []
+        if text in self._split_cache:
+            return self._split_cache[text]
+        cuts = [i for i, char in enumerate(text) if char == " "
+                and 0.25 * len(text) < i < 0.75 * len(text)]
+        best = None
+        for cut in cuts[:6]:
+            left = self.match(text[:cut], allow_fallback=False)
+            right = self.match(text[cut:], allow_fallback=False)
+            if left is None or right is None or left.name == right.name:
+                continue
+            if min(left.score, right.score) < self.SPLIT_MIN_SCORE:
+                continue
+            total = left.score + right.score
+            if best is None or total > best[0]:
+                best = (total, left, right)
+        result = [best[1], best[2]] if best else []
+        if len(self._split_cache) > 512:
+            self._split_cache.clear()
+        self._split_cache[text] = result
+        return result
 
     def match(self, raw: str, allow_fallback: bool = True) -> Match | None:
         """Resolve an OCR read to something typeable, or None.

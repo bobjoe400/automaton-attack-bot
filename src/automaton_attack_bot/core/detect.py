@@ -41,7 +41,7 @@ STATIC_BAND_FRACTION = 0.20
 
 from . import autocolor
 from .config import Settings
-from .lexicon import Lexicon, Match
+from .lexicon import Lexicon, Match, to_key
 from .ocr import OcrBackend, prepare
 
 
@@ -290,7 +290,46 @@ class Detector:
                     box=box, raw=second, match=match,
                     group_box=old.group_box, stack_rank=old.stack_rank)
         detections = self._stitch_wrapped_lines(detections)
+        detections = self._split_horizontal_merges(detections)
         return [d for d in detections if d.match or include_unmatched]
+
+    def _split_horizontal_merges(
+            self, detections: list[Detection]) -> list[Detection]:
+        """Resolve two-word same-height merges into both words.
+
+        A long read that matched nothing (or only a fallback) may be two
+        labels crossing: a combo died behind 2.3s of exactly that
+        blindness. The box splits proportionally at the cut so each word
+        keeps a sane position for urgency and dedup."""
+        out = []
+        attempts = 0
+        for detection in detections:
+            if (detection.match is not None
+                    and detection.match.source != "fallback") or attempts >= 1:
+                out.append(detection)
+                continue
+            text = detection.raw.strip()
+            if len(text) < self.lexicon.SPLIT_MIN_LENGTH:
+                out.append(detection)
+                continue
+            attempts += 1
+            parts = self.lexicon.split_match(detection.raw)
+            if not parts:
+                out.append(detection)
+                continue
+            bx, by, bw, bh = detection.box
+            left_len = len(to_key(parts[0].name))
+            fraction = left_len / max(1, left_len + len(to_key(parts[1].name)))
+            cut = max(1, min(bw - 1, int(bw * fraction)))
+            out.append(Detection(box=(bx, by, cut, bh),
+                                 raw=detection.raw, match=parts[0],
+                                 group_box=detection.group_box,
+                                 stack_rank=detection.stack_rank))
+            out.append(Detection(box=(bx + cut, by, bw - cut, bh),
+                                 raw=detection.raw, match=parts[1],
+                                 group_box=detection.group_box,
+                                 stack_rank=detection.stack_rank))
+        return out
 
     def _read_colour_crop(self, frame_bgr: np.ndarray,
                           box: tuple[int, int, int, int]) -> str:
