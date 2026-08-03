@@ -78,12 +78,27 @@ class DirectInputTypist:
         return 60.0 / (wpm * 5.0)   # 5 characters per "word", by convention
 
     def type(self, text: str) -> None:
+        """Send the keystrokes, pacing to the WPM cap when one is set.
+
+        Throttled keys are HELD for part of the interval: press() taps
+        with zero hold, and a zero-length tap can fall between the
+        game's input polls entirely -- at 150 WPM the tracker consumed
+        ~1 of every 3 keys (DAZZLE: 6 sent in 0.5s, accepted over 1.5s;
+        SHADOW BLADE: 11 sent, 1 accepted, word struck). Full speed
+        keeps the plain tap: burst input lands, and the records were
+        set with it.
+        """
         for char in text:
-            self._pydirectinput.press(char)
             delay = max(random.uniform(*self.behaviour.key_delay),
                         self._min_seconds_per_char)
             if delay > 0:
-                time.sleep(delay)
+                hold = min(0.05, delay * 0.4)
+                self._pydirectinput.keyDown(char)
+                time.sleep(hold)
+                self._pydirectinput.keyUp(char)
+                time.sleep(max(0.0, delay - hold))
+            else:
+                self._pydirectinput.press(char)
         self.typed.append(text)
 
     def click(self, x: int, y: int) -> None:
