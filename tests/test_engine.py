@@ -520,3 +520,22 @@ def test_ages_forget_words_that_left_the_screen():
     engine.process_detections(2.0, [])          # gone for 2s: killed
     engine.process_detections(2.1, [seen])      # a NEW spawn of the name
     assert engine._time_left(seen) > 3.0
+
+
+def test_lockstep_rescues_a_flickered_urgent_word():
+    """SVEN dove 166->756, flickered out of the deciding scan, lost the
+    pick to a safer visible word and struck. A recently-seen word with
+    little lifetime left competes via its last known detection."""
+    sven = detection("SVEN", 1.0, pos=(430, 545))
+    hood = detection("HOODWINK", 1.0, pos=(700, 200))
+    settings = wpm_settings()
+    detector = FakeDetector([], settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    engine.queue_keystrokes = lambda: 5             # keyboard busy: age only
+    engine.process_detections(0.0, [sven, hood])
+    engine.process_detections(2.3, [sven, hood])
+    engine.queue_keystrokes = lambda: 0
+    # SVEN (age 2.5, <1.2s left) flickers out of the deciding scan
+    out = engine.process_detections(2.5, [hood])
+    assert [w.name for w in out] == ["SVEN"]        # rescue outranks hood

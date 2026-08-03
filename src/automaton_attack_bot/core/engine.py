@@ -161,13 +161,6 @@ class Engine:
         # TypingWorker.pending_keystrokes so dedup windows can stretch by
         # the real service time (see _dedup_ttl).
         self.queue_keystrokes: Callable[[], int] = lambda: 0
-        # In-flight introspection/abort, wired to the TypingWorker in
-        # live mode: a word only accepts keys while its label is
-        # rendered, so when the target vanishes mid-word the rest of its
-        # keystrokes are cancelled instead of ghosted.
-        self.inflight_name: Callable[[], str | None] = lambda: None
-        self.cancel_inflight: Callable[[], None] = lambda: None
-        self._inflight_misses = 0
         # Live age ledger: when each on-screen word was first read. Words
         # live ~3.5s from first readable label to the platform no matter
         # their path -- an arcing word looks geometrically safe at its
@@ -252,17 +245,26 @@ class Engine:
         """
         matched = [d for d in detections if d.match]
         if self.queue_keystrokes() > 0:
-            inflight = self.inflight_name()
-            if inflight and all(d.name != inflight for d in matched):
-                self._inflight_misses += 1
-                if self._inflight_misses >= 2:    # debounce OCR flicker
-                    self.cancel_inflight()
-            else:
-                self._inflight_misses = 0
+            # Never interrupt a started word: run32 froze mid-word nine
+            # times because detection flicker over the light barrels was
+            # mistaken for the word vanishing (the label renders in FRONT
+            # of scenery -- it was our mask losing contrast, not the game
+            # hiding the word). Keys for a live word always land.
             return []
-        self._inflight_misses = 0
         sole = matched[0] if len(matched) == 1 else None
-        for detection in matched:
+        # Rescue: a word can flicker out of OUR detection for a scan or
+        # two (fast mover crossing a light barrel) exactly when it is
+        # about to die -- SVEN dove 166->756, vanished from the deciding
+        # scan, lost the pick to a safer word and struck. A recently-seen
+        # word with little lifetime left competes using its last known
+        # detection: the game still renders its label, so keys land.
+        names = {d.name for d in matched}
+        rescues = [e["det"] for e in self._ages
+                   if e["name"] not in names and "det" in e
+                   and 0.0 < timestamp - e["last"] <= 0.6
+                   and self.WORD_LIFETIME - (timestamp - e["first"]) < 1.2]
+        candidates = sorted(matched + rescues, key=self._urgency)
+        for detection in candidates:
             if detection is sole:
                 own = len(detection.match.keystrokes)
                 ttl = own * self._char_seconds() + self.KILL_CONFIRM
@@ -373,10 +375,12 @@ class Engine:
                         and abs(entry["pos"][1] - d.pos[1]) < self.AGE_MATCH_RADIUS):
                     entry["pos"] = d.pos
                     entry["last"] = timestamp
+                    entry["det"] = d
                     break
             else:
                 self._ages.append({"name": d.name, "pos": d.pos,
-                                   "first": timestamp, "last": timestamp})
+                                   "first": timestamp, "last": timestamp,
+                                   "det": d})
         self._ages = [e for e in self._ages
                       if timestamp - e["last"] <= self.AGE_FORGET]
         self._now = timestamp

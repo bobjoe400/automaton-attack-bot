@@ -159,22 +159,6 @@ class TypingWorker(threading.Thread):
         self._condition = threading.Condition()
         self._stopped = False
         self._typing_keys = 0   # keystrokes of the word being typed now
-        self._typing_name: str | None = None
-        self._abort_current = threading.Event()
-        self.aborted_words = 0
-
-    def inflight_name(self) -> str | None:
-        """Name of the word being typed right now, if any."""
-        return self._typing_name
-
-    def cancel_current(self) -> None:
-        """Stop the in-flight word between keystrokes.
-
-        Run31 frame audit: BUTTERFLY slid behind a barrel mid-word and
-        every remaining key ghosted -- a word only accepts keys while
-        its label is rendered, so keystrokes for a hidden word are
-        guaranteed waste."""
-        self._abort_current.set()
 
     def pending_keystrokes(self) -> int:
         """Keystrokes queued plus in-progress -- the keyboard's backlog.
@@ -234,19 +218,10 @@ class TypingWorker(threading.Thread):
                 self.dropped_triage += 1
                 continue
             self._typing_keys = len(word.keystrokes)
-            self._typing_name = word.name
-            self._abort_current.clear()
             try:
-                try:
-                    self.typist.type(word.keystrokes,
-                                     should_abort=self._abort_current.is_set)
-                except TypeError:
-                    self.typist.type(word.keystrokes)
+                self.typist.type(word.keystrokes)
             finally:
                 self._typing_keys = 0
-                self._typing_name = None
-                if self._abort_current.is_set():
-                    self.aborted_words += 1
             if self.on_typed:
                 self.on_typed(word, waited)
 

@@ -46,8 +46,6 @@ def drive(frames, lexicon, backend, settings, typist, *,
         worker = TypingWorker(typist, engine._urgency, on_typed=emit)
         engine.dispatch = worker.submit
         engine.queue_keystrokes = worker.pending_keystrokes
-        engine.inflight_name = worker.inflight_name
-        engine.cancel_inflight = worker.cancel_current
         worker.start()
         # Detection is pipelined: while one scan's OCR runs, the next
         # frame's starts. Decisions stay strictly ordered (the confirmer's
@@ -71,9 +69,6 @@ def drive(frames, lexicon, backend, settings, typist, *,
             if worker.dropped_triage:
                 LOG.say(f"{worker.dropped_triage} weak guess(es) skipped "
                         f"while the keyboard queue was deep.")
-            if worker.aborted_words:
-                LOG.say(f"{worker.aborted_words} word(s) aborted mid-typing "
-                        f"after their label vanished.")
 
 
 def _drive_loop(frames, lexicon, backend, settings, typist, engine, tracker,
