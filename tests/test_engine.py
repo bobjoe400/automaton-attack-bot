@@ -471,3 +471,30 @@ def test_lockstep_skips_insurance_and_embedded():
     weak = detection("HYPNOTIZE", 0.65, raw="HYPOTHERMIA")
     typist = run_clocked([[weak], [weak]], settings=wpm_settings(), step=0.2)
     assert typist.typed == ["hypnotize"]
+
+
+# -- word ages ---------------------------------------------------------------
+def test_an_old_high_word_outranks_a_fresh_closer_one():
+    """Words live ~3.5s from first readable label no matter the path; an
+    arcing word looks geometrically safe at its apex right before it
+    plummets. Age is a deadline position cannot see."""
+    old_high = detection("LYCAN", 1.0, pos=(200, 120))
+    fresh_mid = detection("KHANDA", 1.0, pos=(430, 500))
+    settings = Settings()
+    detector = FakeDetector([], settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    engine.process_detections(0.0, [old_high])
+    engine.process_detections(2.8, [old_high, fresh_mid])
+    # LYCAN was typed at 0.0; at 2.8 it has ~0.6s left vs KHANDA's ~1.1s
+    assert engine._urgency(old_high) < engine._urgency(fresh_mid)
+
+
+def test_ages_forget_words_that_left_the_screen():
+    settings = Settings()
+    engine = Engine(FakeDetector([], settings), DryRunTypist(), settings)
+    seen = detection("LYCAN", 1.0, pos=(200, 120))
+    engine.process_detections(0.0, [seen])
+    engine.process_detections(2.0, [])          # gone for 2s: killed
+    engine.process_detections(2.1, [seen])      # a NEW spawn of the name
+    assert engine._time_left(seen) > 3.0

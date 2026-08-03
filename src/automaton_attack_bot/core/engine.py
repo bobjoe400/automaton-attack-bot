@@ -158,6 +158,12 @@ class Engine:
         # Lock-step state for throttled play: (name, pos, last emit time)
         # of the word currently being fed to the game.
         self._active_lock: tuple[str, tuple[int, int], float] | None = None
+        # Live age ledger: when each on-screen word was first read. Words
+        # live ~3.5s from first readable label to the platform no matter
+        # their path -- an arcing word looks geometrically safe at its
+        # apex moments before it plummets.
+        self._ages: list[dict] = []
+        self._now = 0.0
 
     # Where Hoodwink stands, in panel fractions: words die when their
     # automaton reaches this point, so distance to it is time-to-live.
@@ -325,6 +331,40 @@ class Engine:
                                  stack_rank=rank)
         return out
 
+    # Observed live: strikes land 3.2-3.5s after the label first became
+    # readable, regardless of trajectory.
+    WORD_LIFETIME = 3.4
+    AGE_FORGET = 1.0        # unseen this long = the word is gone; forget it
+    AGE_MATCH_RADIUS = 300  # px a word can drift and still be itself
+
+    def _update_ages(self, timestamp: float,
+                     detections: list[Detection]) -> None:
+        for d in detections:
+            if not d.name:
+                continue
+            for entry in self._ages:
+                if (entry["name"] == d.name
+                        and abs(entry["pos"][0] - d.pos[0]) < self.AGE_MATCH_RADIUS
+                        and abs(entry["pos"][1] - d.pos[1]) < self.AGE_MATCH_RADIUS):
+                    entry["pos"] = d.pos
+                    entry["last"] = timestamp
+                    break
+            else:
+                self._ages.append({"name": d.name, "pos": d.pos,
+                                   "first": timestamp, "last": timestamp})
+        self._ages = [e for e in self._ages
+                      if timestamp - e["last"] <= self.AGE_FORGET]
+        self._now = timestamp
+
+    def _time_left(self, detection: Detection) -> float:
+        """Seconds until this word's lifetime runs out, if we know it."""
+        for entry in self._ages:
+            if (entry["name"] == detection.name
+                    and abs(entry["pos"][0] - detection.pos[0]) < self.AGE_MATCH_RADIUS
+                    and abs(entry["pos"][1] - detection.pos[1]) < self.AGE_MATCH_RADIUS):
+                return self.WORD_LIFETIME - (self._now - entry["first"])
+        return float("inf")
+
     def _urgency(self, detection: Detection) -> float:
         """Smaller = must start typing sooner.
 
@@ -332,6 +372,11 @@ class Engine:
         line needs ~0.7s of keyboard before it completes, so it must
         start earlier than a 4-key word at the same range. Two phrases
         died this exact way -- queued behind each other while both fell.
+
+        The deadline is the SOONER of position and age: words live ~3.5s
+        from first readable label no matter the path, and an arcing word
+        reads as geometrically safe at its apex moments before it
+        plummets -- age catches what position cannot.
 
         Stacked words use the whole pile's position (they fall together)
         plus a per-rank delay, so a stack always types top-first: bundles
@@ -343,6 +388,7 @@ class Engine:
         dx = (bx + bw / 2) / panel_w - self.PLATFORM[0]
         dy = (by + bh / 2) / panel_h - self.PLATFORM[1]
         deadline = (dx * dx + dy * dy) ** 0.5 / self.APPROACH_SPEED
+        deadline = min(deadline, self._time_left(detection))
         keys = len(detection.match.keystrokes) if detection.match else 0
         return (deadline - keys * self.SECONDS_PER_KEY
                 + detection.stack_rank * self.STACK_RANK_DELAY)
@@ -372,6 +418,7 @@ class Engine:
             if (d.box[1] + d.box[3]) / panel_h < self.STRIKE_BAND
         ]
         detections = self._group_stacks(detections)
+        self._update_ages(timestamp, detections)
         detections.sort(key=self._urgency)
         self.last_detections = detections
         self.stats.frames += 1
