@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--monitor", default="auto",
                         help="monitor to capture: a number, or 'auto' to "
                              "find the Dota 2 window (default: auto)")
-    parser.add_argument("--max-wpm", type=float,
+    parser.add_argument("--max-wpm", "--wpm", type=float, dest="max_wpm",
                         help="cap typing speed, in words per minute")
     parser.add_argument("--no-auto-start", action="store_true",
                         help="don't click PLAY / PLAY AGAIN when a start or "

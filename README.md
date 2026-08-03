@@ -66,7 +66,7 @@ attested, not Authenticode-signed.)
 | Command | What it does |
 | --- | --- |
 | *(none)* | Open the control panel (`--cli` to play in the terminal instead) |
-| `analyze CLIP` | Report likely misses from a recording: platform strikes, weak/unmatched reads |
+| `analyze CLIP` | Report misses and per-word screen time from a recording (`--stride 1` for frame-exact) |
 | `replay CLIP` | Run detection over a recording; never types |
 | `doctor` | Check dependencies, OCR backends and data files |
 | `match TEXT` | Ask the lexicon what an OCR read resolves to |

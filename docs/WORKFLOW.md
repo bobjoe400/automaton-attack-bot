@@ -9,8 +9,10 @@ the artifacts back —
 
 1. `logs/run-<stamp>.log` — the combo telemetry pins any loss to a round
    clock; the per-scan detail shows exactly what was read at that moment.
-2. `automaton analyze recording.mp4` — names words that reached the platform
-   and stable reads with weak or missing matches.
+2. `automaton analyze recording.mp4` — names words that reached the platform,
+   stable reads with weak or missing matches, and per-word screen time
+   with anything that lingered flagged by name and round clock. Use
+   `--stride 1` for frame-exact lifetimes (slower; progress is printed).
 3. Real words the corpus lacks go one-per-line into
    [custom_vocab.txt](../src/automaton_attack_bot/data/custom_vocab.txt) — applied
    at load, no rebuild. Trust observation over documentation: several

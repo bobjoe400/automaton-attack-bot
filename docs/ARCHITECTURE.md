@@ -40,22 +40,33 @@ threads, none of which waits on another except where correctness demands it:
 3. **Matching** tries, in order: core vocabulary (fuzzy, accept ≥0.62, prefer
    the longer prefix-extension on near-ties — typing WEAVER completes WEAVE on
    the way through); unique containment (a fly-in fragment inside exactly one
-   vocab key IS that word); the voice-line corpus (accept ≥0.80); embedded
+   vocab key IS that word); the voice-line corpus (accept ≥0.80); split
+   matching (two labels crossing at the same height OCR as one garble — cut
+   it at a middle space and both halves match independently); embedded
    mining (interleaved pile-ups OCR as mush that contains component words
    letter-perfect — type them all); verbatim fallback for clean unmatched
    reads, gated on 0.35s of real-time stability; and verbatim insurance
    whenever the best match is weak, because a wrong guess costs nothing and a
    blocked word costs the combo.
 4. **Scheduling**: words type nearest-the-platform-first (deadline minus
-   typing time); labels below 70% of panel height are the game's kill display
-   and are never typed; a word still visible ~1.2s after its keystrokes did
-   not complete and is retyped — typing is self-correcting.
+   typing time). Vertically stacked labels are one in-game bundle and the
+   game only accepts its TOP word, so bundles type strictly top-first.
+   Labels below 70% of panel height are the game's kill display and are
+   never typed. A typed word still visible is still alive (a killed word
+   vanishes instantly): it retypes after ~1.2s, or 0.4s when it is deep in
+   the panel — both windows stretched by the keyboard's real service time
+   so a `--max-wpm` run doesn't double-type words it is still typing.
 5. **Typing worker** sends keystrokes at full speed from a HIGHEST-priority
    thread, dropping stale or hopeless entries under load.
-6. **Session tracking** reads the round state, combo multiplier, clock and
-   final score from the HUD (digits via a tesseract whitelist where
-   available — PP-OCR garbles `17,770` into `17,7%`), settles the score
-   against its count-up animation, and clicks PLAY / PLAY AGAIN itself.
+6. **Session tracking** reads the round state, clock and final score from
+   the HUD (digits via a tesseract whitelist when installed; otherwise the
+   right-aligned digit cluster is isolated and upscaled before OCR —
+   whole-row reads drop digits). The combo multiplier is read every 0.15s
+   on its own telemetry worker and logged against the frame it was read
+   from. Score settles against its count-up animation. PLAY / PLAY AGAIN
+   are clicked with frame coordinates translated by the capture monitor's
+   origin (the process is DPI-aware); the game-over click is text-verified
+   first, and three unanswered clicks drop the geometry lock entirely.
 
 ## Configuration
 
@@ -75,6 +86,14 @@ directory) plus annotated diagnostic images.
 - 60-second round, no fail state. Words fly in from the sides and below and
   converge on Hoodwink at the platform; a word that reaches her untyped
   resets the score multiplier to 1.
+- A label shows the word's point value while it is ALIVE (the yellow first
+  letter is the next key to type); a killed word vanishes instantly —
+  nothing lingers.
+- Words that overlap into a bundle are served top-first by the game:
+  keystrokes for a lower word do nothing until everything above it clears,
+  and in a tight pile only the top label is cleanly readable. Automatons
+  can also queue up label-less — there is nothing to type until the game
+  grants the label.
 - **Wrong keystrokes cost nothing** — input isn't targeted at a word, stray
   letters just don't advance anything. So the bot is greedy: attempt
   everything the moment it's seen, and let a better read on the next scan
