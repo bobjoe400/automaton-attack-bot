@@ -117,9 +117,10 @@ class ReadLog:
                      clock: int | None = None) -> None:
         """Track how long a matched word stayed on screen.
 
-        The measured lifetime includes the ~2s completion display that
-        lingers after a kill (its text reads identically), so compare
-        words against each other, not against zero.
+        A killed word vanishes instantly (the number under a label is
+        its point value, shown while ALIVE), so an episode's duration is
+        genuine time-alive: label materialise -> death. Long episodes
+        are words that needed retyping or went unread.
         """
         episode = self._open_episodes.get(name)
         if episode and timestamp - episode.last_seen <= EPISODE_GAP:
@@ -138,7 +139,7 @@ class ReadLog:
         if not stable:
             return 0.0, []
         average = sum(e.duration for e in stable) / len(stable)
-        threshold = max(2.5, 1.8 * average)
+        threshold = max(1.5, 1.8 * average)
         slow = sorted((e for e in stable if e.duration >= threshold),
                       key=lambda e: -e.duration)
         return average, slow

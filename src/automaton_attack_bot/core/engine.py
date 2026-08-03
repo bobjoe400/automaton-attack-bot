@@ -97,21 +97,6 @@ class Deduper:
     def mark(self, name: str, pos: tuple[int, int]) -> None:
         self._entries.append((name, pos, self.clock()))
 
-    def sank(self, name: str, pos: tuple[int, int], delta: int = 8) -> bool:
-        """The word moved DOWN since it was typed here.
-
-        Separates a blocked live word (keys eaten, still falling -- retype
-        fast) from a completion display (the big white text lingers ~3s
-        and floats UP as it fades; LEGION COMMANDER's ghost got re-typed
-        a second after its kill)."""
-        for entry_name, entry_pos, _ in self._entries:
-            if entry_name != name:
-                continue
-            if (abs(entry_pos[0] - pos[0]) < self.radius
-                    and abs(entry_pos[1] - pos[1]) < self.radius):
-                return pos[1] > entry_pos[1] + delta
-        return False
-
 
 class Confirmer:
     """Holds fallback reads back until they stay stable over real TIME.
@@ -205,18 +190,19 @@ class Engine:
     def _dedup_ttl(self, detection: Detection) -> float | None:
         """Shorter dedup window for words deep in the panel (live only:
         on tape typed words never vanish, so replays -- which floor the
-        TTL at 3.0 -- must not rapid-fire retypes). Only words that SANK
-        since being typed qualify: a completion display in the danger
-        band would otherwise be re-typed every 0.4s as it fades."""
+        TTL at 3.0 -- must not rapid-fire retypes).
+
+        A typed word still visible is still ALIVE -- a killed word
+        vanishes instantly, points and all (the number under a label is
+        its value, not an award; a mistaken 'completion display' theory
+        briefly gated this on sinking and cost LEGION COMMANDER 1.6
+        extra seconds while it rose with eaten keys). Direction does not
+        matter: bottom-spawned words rise toward the platform."""
         if self.settings.behaviour.dedup_ttl > 2.0:
             return None
         panel_h = self.settings.geometry.panel_size[1]
         bottom = (detection.box[1] + detection.box[3]) / panel_h
-        if bottom < self.DANGER_BAND:
-            return None
-        if not self.deduper.sank(detection.name, detection.pos):
-            return None
-        return self.DANGER_RETYPE_TTL
+        return self.DANGER_RETYPE_TTL if bottom >= self.DANGER_BAND else None
 
     def _group_stacks(self, detections: list[Detection]) -> list[Detection]:
         """Tag vertically-adjacent, horizontally-overlapping labels as one
