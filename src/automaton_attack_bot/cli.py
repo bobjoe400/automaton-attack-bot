@@ -385,6 +385,9 @@ def cmd_analyze(args) -> int:
                                          timestamp=timestamp):
             log.add(timestamp, detection, clock=clock)
             bottom = detection.box[1] + detection.box[3]
+            if detection.name and bottom / panel_height < 0.70:
+                log.add_lifetime(timestamp, detection.name,
+                                 bottom / panel_height, clock=clock)
             if bottom / panel_height >= 0.70 and (detection.name
                                                   or detection.raw.strip()):
                 log.add_strike(timestamp, clock,

@@ -47,3 +47,31 @@ def test_confident_matches_stay_out_of_the_report():
         log.add(t, det("SHAWL", "SHAWL", 1.0))
     assert log.weak_matches() == []
     assert "every stable read matched" in log.report()
+
+
+# -- screen-time tracking ----------------------------------------------------
+def test_lifetimes_merge_sightings_and_split_on_gaps():
+    from automaton_attack_bot.analyze import ReadLog
+
+    log = ReadLog()
+    for t in (10.0, 10.2, 10.4, 10.6):
+        log.add_lifetime(t, "LEGION COMMANDER", 0.5, clock=30)
+    log.add_lifetime(15.0, "LEGION COMMANDER", 0.4, clock=25)  # respawn
+    episodes = [e for e in log.episodes if e.name == "LEGION COMMANDER"]
+    assert len(episodes) == 2
+    assert abs(episodes[0].duration - 0.6) < 1e-9
+    assert episodes[0].sightings == 4
+
+
+def test_lingerers_flags_the_outlier():
+    from automaton_attack_bot.analyze import ReadLog
+
+    log = ReadLog()
+    for start, name in ((0, "BANE"), (2, "PUDGE"), (4, "LINA")):
+        for t in (start, start + 0.3, start + 0.6):
+            log.add_lifetime(t, name, 0.4)
+    for t in [10.0 + 0.2 * i for i in range(30)]:          # 5.8s lingerer
+        log.add_lifetime(t, "LEGION COMMANDER", 0.55)
+    average, slow = log.lingerers()
+    assert [e.name for e in slow] == ["LEGION COMMANDER"]
+    assert average < 2.0 < slow[0].duration
