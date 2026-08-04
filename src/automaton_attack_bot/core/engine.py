@@ -30,6 +30,7 @@ from typing import Callable, Iterable, Iterator
 
 import numpy as np
 
+from ..logbook import LOG
 from .config import Settings
 from .detect import Detection, Detector
 from .keyboard import DryRunTypist
@@ -167,6 +168,11 @@ class Engine:
         # apex moments before it plummets.
         self._ages: list[dict] = []
         self._now = 0.0
+        # Vision-outage watchdog: run36's "freeze" was 2.3s of scans that
+        # read NOTHING while two clean labels sat on screen -- and the log
+        # could not show it, because empty scans leave no trace. When a
+        # matched read ends a dark spell, say how long the lights were out.
+        self._last_match_seen: float | None = None
 
     # Where Hoodwink stands, in panel fractions: words die when their
     # automaton reaches this point, so distance to it is time-to-live.
@@ -221,6 +227,10 @@ class Engine:
     # barrel); a word stays a believed-alive candidate this long after
     # its last sighting.
     FLICKER_WINDOW = 0.6
+    # A spell of match-less scans longer than this gets reported when it
+    # ends: an empty screen between waves is normal, but run36 lost 2.3s
+    # to an invisible outage and the log had no line to show for it.
+    VISION_GAP_REPORT = 1.0
 
     def _process_lockstep(self, timestamp: float,
                           detections: list[Detection]) -> list[TypedWord]:
@@ -408,13 +418,9 @@ class Engine:
                 return left
         return float("inf")
 
-    def _urgency(self, detection: Detection) -> float:
-        """Smaller = must start typing sooner.
-
-        Deadline minus service time, not bare distance: a 30-key voice
-        line needs ~0.7s of keyboard before it completes, so it must
-        start earlier than a 4-key word at the same range. Two phrases
-        died this exact way -- queued behind each other while both fell.
+    def _urgency(self, detection: Detection) -> tuple[float, int, str]:
+        """Smaller = must start typing sooner. Compares as a tuple:
+        deadline, then keystroke count, then name.
 
         The deadline is what the ledger measured, not where the word
         happens to hang: lifetime remaining, or the arrival its own
@@ -424,13 +430,20 @@ class Engine:
         and is gone: trajectory speed varies with spawn height, so
         position without motion says almost nothing.
 
+        Ties are common -- words spawning on the same scan share a
+        deadline to the decimal -- and used to fall through to ledger
+        insertion order, i.e. chance. The hard rule: shorter word first
+        (it frees the keyboard soonest, so a tight pair has the best
+        odds of both surviving), then alphabetical, so every tie breaks
+        the same way every time.
+
         Stacked words carry a per-rank delay so a stack always types
         top-first: the game only accepts a pile's top word.
         """
         deadline = self._time_left(detection)
         keys = len(detection.match.keystrokes) if detection.match else 0
-        return (deadline - keys * self.SECONDS_PER_KEY
-                + detection.stack_rank * self.STACK_RANK_DELAY)
+        return (deadline + detection.stack_rank * self.STACK_RANK_DELAY,
+                keys, detection.name or "")
 
     def process(self, timestamp: float,
                 frame: np.ndarray) -> list[TypedWord]:
@@ -462,6 +475,13 @@ class Engine:
         self.last_detections = detections
         self.stats.frames += 1
         self.stats.detections += sum(1 for d in detections if d.match)
+        if any(d.match for d in detections):
+            if self._last_match_seen is not None:
+                dark = timestamp - self._last_match_seen
+                if dark > self.VISION_GAP_REPORT:
+                    LOG.trace(f"[{timestamp:7.2f}s] vision gap: no matched "
+                              f"reads for {dark:.2f}s")
+            self._last_match_seen = timestamp
         if self._char_seconds() >= self.LOCKSTEP_THRESHOLD:
             typed = self._process_lockstep(timestamp, detections)
             self.confirmer.update(detections, timestamp)

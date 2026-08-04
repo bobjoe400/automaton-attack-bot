@@ -252,16 +252,25 @@ def test_short_weak_reads_get_no_insurance():
     assert typist.typed == ["cloak"]
 
 
-def test_long_phrases_win_the_tie_at_equal_range():
-    """Urgency is deadline MINUS service time, so at equal range the
-    longer keystroke burden starts first. (At full typing speed the
-    service term is small, but the tie-break still matters: two phrases
-    once died queued behind each other.)"""
+def test_ties_break_shorter_first_then_alphabetical():
+    """The hard tie rule (run36): words spawning on the same scan share
+    a deadline to the decimal, and the order used to fall to ledger
+    insertion order -- chance. Now the shorter word types first (it
+    frees the keyboard soonest, so a tight pair has the best odds of
+    both surviving), and equal lengths break alphabetically."""
     phrase = detection("TOLD YOU A STORM WAS COMING!", 1.0, pos=(300, 300),
                        source="phrase")
     word = detection("AXE", 1.0, pos=(300, 300))
-    typed, typist, _ = run_engine([[word, phrase]])
-    assert typist.typed[0] == "toldyouastormwascoming"
+    typed, typist, _ = run_engine([[phrase, word]])
+    assert typist.typed[0] == "axe"
+
+    settings = Settings()
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(FakeDetector([], settings), typist, settings)
+    engine.process_detections(
+        1.0, [detection("SVEN", 1.0), detection("LION", 1.0,
+                                                pos=(430, 580))])
+    assert typist.typed == ["lion", "sven"]   # equal length: L before S
 
 
 def test_process_detections_matches_process():
@@ -271,10 +280,10 @@ def test_process_detections_matches_process():
     typist = DryRunTypist(settings.behaviour)
     engine = Engine(FakeDetector([], settings), typist, settings)
     words = engine.process_detections(
-        1.0, [detection("BANE", 1.0), detection("PUDGE", 1.0,
-                                                pos=(430, 580))])
-    assert [w.name for w in words] == ["PUDGE", "BANE"]   # urgency order
-    assert typist.typed == ["pudge", "bane"]
+        1.0, [detection("PUDGE", 1.0, pos=(430, 580)),
+              detection("BANE", 1.0)])
+    assert [w.name for w in words] == ["BANE", "PUDGE"]   # urgency order
+    assert typist.typed == ["bane", "pudge"]
 
 
 def test_embedded_words_type_from_weak_cluster_reads():
@@ -355,11 +364,12 @@ def test_separate_blobs_that_bundle_type_top_first():
 
 def test_side_by_side_words_do_not_bundle():
     """Horizontally separate words at similar heights are independent --
-    normal urgency order applies (nearest the platform first)."""
+    no stack rank is assigned, so plain urgency order applies (equal
+    deadlines here, so the tie rule: shorter word first)."""
     left = detection("BANE", 1.0, pos=(100, 420))
     right = detection("PUDGE", 1.0, pos=(700, 430))
     typed, typist, _ = run_engine([[left, right]])
-    assert typist.typed == ["pudge", "bane"]
+    assert typist.typed == ["bane", "pudge"]
 
 
 # -- danger-zone retype ------------------------------------------------------
