@@ -353,8 +353,14 @@ class Engine:
     # Observed live: strikes land 3.2-3.5s after the label first became
     # readable, regardless of trajectory.
     WORD_LIFETIME = 3.4
-    AGE_FORGET = 1.0        # unseen this long = the word is gone; forget it
-    AGE_MATCH_RADIUS = 300  # px a word can drift and still be itself
+    # Identity must survive gray phases: DIADEM went unseen for 2.02s
+    # (locked out while other words typed), got pruned at the old 1.0s,
+    # re-entered the ledger as a newborn with no velocity, lost the
+    # equal-age tie-break to a fresh word and struck. A word's age and
+    # measured velocity persist across gaps up to a lifetime; eligibility
+    # to TYPE still requires a sighting within FLICKER_WINDOW.
+    AGE_FORGET = 3.5
+    AGE_MATCH_RADIUS = 450  # px a word can drift across a gray phase
 
     def _update_ages(self, timestamp: float,
                      detections: list[Detection]) -> None:

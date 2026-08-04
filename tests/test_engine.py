@@ -511,14 +511,20 @@ def test_an_old_high_word_outranks_a_fresh_closer_one():
     assert engine._urgency(old_high) < engine._urgency(fresh_mid)
 
 
-def test_ages_forget_words_that_left_the_screen():
+def test_ages_survive_gaps_but_forget_eventually():
+    """Identity persists across gray phases (a 2s gap is DIADEM's lock-
+    out, not a death); only a gap longer than a whole lifetime means a
+    genuinely new spawn."""
     settings = Settings()
     engine = Engine(FakeDetector([], settings), DryRunTypist(), settings)
     seen = detection("LYCAN", 1.0, pos=(200, 120))
     engine.process_detections(0.0, [seen])
-    engine.process_detections(2.0, [])          # gone for 2s: killed
-    engine.process_detections(2.1, [seen])      # a NEW spawn of the name
-    assert engine._time_left(seen) > 3.0
+    engine.process_detections(2.0, [])              # gray phase
+    engine.process_detections(2.1, [seen])
+    assert engine._time_left(seen) < 2.0            # age was preserved
+    engine.process_detections(6.0, [])              # gone past a lifetime
+    engine.process_detections(6.1, [seen])
+    assert engine._time_left(seen) > 3.0            # a new spawn now
 
 
 def test_lockstep_rescues_a_flickered_urgent_word():
@@ -565,3 +571,19 @@ def test_a_measured_diver_outranks_slower_lower_words():
     engine.process_detections(0.7, [diver1, lower])
     # LINA: vy ~357 px/s, ~0.6s from the platform; PUGNA sits still
     assert engine._urgency(diver1) < engine._urgency(lower)
+
+
+def test_age_and_velocity_survive_a_gray_phase():
+    """DIADEM: unseen for 2.02s while locked out, pruned by the old
+    1.0s forget window, re-entered as a newborn and lost the tie-break
+    to fresh TERRORBLADE -- then struck. Identity persists across gaps;
+    a re-sighted old diver outranks a fresh word instantly."""
+    settings = Settings()
+    engine = Engine(FakeDetector([], settings), DryRunTypist(), settings)
+    engine.queue_keystrokes = lambda: 5
+    d0 = detection("DIADEM", 1.0, pos=(640, 500))
+    engine.process_detections(0.0, [d0])
+    d1 = detection("DIADEM", 1.0, pos=(680, 720))     # re-seen after gap
+    fresh = detection("TERRORBLADE", 1.0, pos=(160, 160))
+    engine.process_detections(2.0, [d1, fresh])
+    assert engine._urgency(d1) < engine._urgency(fresh)
