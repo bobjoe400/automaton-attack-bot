@@ -204,3 +204,33 @@ def test_three_line_wrapped_phrase_is_stitched():
     assert len(stitched) == 1
     assert stitched[0].match is not None
     assert stitched[0].match.keystrokes == "youlllookgoodwithanappleinyermouth"
+
+
+def test_weak_whole_match_yields_to_a_two_word_split():
+    """'WARLOC BROADSWORD' -- two labels crossing -- whole-matched
+    PALADIN SWORD at 0.64, so the splitter (which only ran on unmatched
+    reads) never fired, and the engine typed an 11-key phantom whose
+    embedded 'w' locked the real WARLOCK (run37). A weak whole-read
+    match must lose to a split whose halves both clearly beat it."""
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Lexicon, Match
+
+    lexicon = Lexicon(["Warlock", "Broadsword", "Paladin Sword"])
+    detector = Detector(lexicon, NoOcr(), Settings())
+    merged = Detection(box=(300, 400, 400, 22), raw="WARLOC BROADSWORD",
+                       match=Match("PALADIN SWORD", 0.64, "vocab"))
+    parts = detector._split_horizontal_merges([merged])
+    assert [p.match.name for p in parts] == ["WARLOCK", "BROADSWORD"]
+
+
+def test_strong_whole_match_is_never_split():
+    """'BELT OF STRENGTH' at 1.0 contains spaces but is one label; a
+    solid match must pass through untouched."""
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Lexicon, Match
+
+    lexicon = Lexicon(["Belt of Strength", "Belt", "Strength"])
+    detector = Detector(lexicon, NoOcr(), Settings())
+    solid = Detection(box=(300, 400, 400, 22), raw=" BELT OF STRENGTH",
+                      match=Match("BELT OF STRENGTH", 1.0, "vocab"))
+    assert detector._split_horizontal_merges([solid]) == [solid]

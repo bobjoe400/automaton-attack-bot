@@ -498,9 +498,15 @@ def test_lockstep_refeed_waits_out_typing_plus_kill_render():
 
 
 def test_lockstep_skips_insurance_and_embedded():
-    """Keys are time at capped WPM; speculative typing is off."""
+    """Keys are time at capped WPM; speculative typing is off, and a
+    bottom-of-the-band fuzzy (0.65) waits for a cleaner read instead of
+    gambling the keyboard (run37: the 0.64 phantom). A decent fuzzy
+    still types exactly once."""
     weak = detection("HYPNOTIZE", 0.65, raw="HYPOTHERMIA")
     typist = run_clocked([[weak]] * 2, settings=wpm_settings(), step=0.6)
+    assert typist.typed == []
+    decent = detection("HYPNOTIZE", 0.82, raw="HYPNOTIZED")
+    typist = run_clocked([[decent]] * 2, settings=wpm_settings(), step=0.6)
     assert typist.typed == ["hypnotize"]
 
 
@@ -597,3 +603,65 @@ def test_age_and_velocity_survive_a_gray_phase():
     fresh = detection("TERRORBLADE", 1.0, pos=(160, 160))
     engine.process_detections(2.0, [d1, fresh])
     assert engine._urgency(d1) < engine._urgency(fresh)
+
+
+def test_lockstep_garbage_guard_blocks_scrap_fuzzies():
+    """Run37: 'A E'->AXE 0.80 (two letters!) stole the keyboard from a
+    diving SKULL BASHER, and 'WARLOC BROADSWORD'->PALADIN SWORD 0.64
+    typed an 11-key phantom. Under a cap wrong keys cost time and can
+    LOCK a word: a fuzzy match needs enough letters read AND a decent
+    score before it may have the keyboard."""
+    ghost = detection("AXE", 0.80, raw="A E", pos=(300, 300))
+    real = detection("SKULL BASHER", 1.0, pos=(700, 300))
+    typist = run_clocked([[ghost, real]] * 2, settings=wpm_settings(),
+                         step=0.6)
+    assert typist.typed == ["skullbasher"]
+
+    low = detection("PALADIN SWORD", 0.64, raw="WARLOC BROADSWORD",
+                    pos=(300, 300))
+    typist = run_clocked([[low]] * 2, settings=wpm_settings(), step=0.6)
+    assert typist.typed == []
+
+
+def test_blind_reveal_prefers_the_hidden_elder():
+    """Run37: SKULL BASHER spawned during HYPERSTONE's lock and surfaced
+    with a newborn's ledger age, tied with the genuinely-new RINGMASTER,
+    lost the tie and struck one second later. A word first seen at a
+    lock's release is presumed half-the-lock old; the engine holds ONE
+    scan so every revealed contender gets a velocity, and RINGMASTER's
+    fast climb proves it newborn -- cancelling its charge and sending
+    the elder first, despite being the longer word."""
+    settings = wpm_settings(100.0)
+    engine = Engine(FakeDetector([], settings),
+                    DryRunTypist(settings.behaviour), settings)
+    hyper = detection("HYPERSTONE", 1.0, pos=(500, 400))
+    out = engine.process_detections(0.0, [hyper])
+    assert [w.name for w in out] == ["HYPERSTONE"]
+    # Lock runs 0.0 -> 1.2 (10 keys at 0.12s). The reveal scan shows
+    # both newcomers at once: no emission yet (measurement beat).
+    basher0 = detection("SKULL BASHER", 1.0, pos=(325, 581))
+    ring0 = detection("RING MASTER", 1.0, pos=(842, 555))
+    out = engine.process_detections(1.25, [basher0, ring0])
+    assert out == []
+    # One scan later: basher hovers at its apex, ringmaster climbs fast.
+    basher1 = detection("SKULL BASHER", 1.0, pos=(326, 582))
+    ring1 = detection("RING MASTER", 1.0, pos=(838, 525))
+    out = engine.process_detections(1.35, [basher1, ring1])
+    assert [w.name for w in out] == ["SKULL BASHER"]
+
+
+def test_reveal_measurement_beat_cannot_stall():
+    """If the second sighting never distinguishes the reveals (both
+    hover), the beat expires at REVEAL_MEASURE and the engine commits
+    with what it has -- rule 2 still holds."""
+    settings = wpm_settings(100.0)
+    engine = Engine(FakeDetector([], settings),
+                    DryRunTypist(settings.behaviour), settings)
+    engine.process_detections(0.0, [detection("HYPERSTONE", 1.0,
+                                              pos=(500, 400))])
+    a = detection("KAYA", 1.0, pos=(325, 581))
+    b = detection("MJOLLNIR", 1.0, pos=(842, 555))
+    assert engine.process_detections(1.25, [a, b]) == []
+    # Neither is re-seen (velocities stay unknown), but the beat expires:
+    out = engine.process_detections(1.60, [])
+    assert [w.name for w in out] == ["KAYA"]        # tie rule: shorter

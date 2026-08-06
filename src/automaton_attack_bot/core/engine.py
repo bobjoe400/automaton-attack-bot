@@ -168,6 +168,9 @@ class Engine:
         # apex moments before it plummets.
         self._ages: list[dict] = []
         self._now = 0.0
+        # (start, end) of the most recent typing lock -- the span during
+        # which every non-selected label rendered near-invisible gray.
+        self._lock_span: tuple[float, float] | None = None
         # Vision-outage watchdog: run36's "freeze" was 2.3s of scans that
         # read NOTHING while two clean labels sat on screen -- and the log
         # could not show it, because empty scans leave no trace. When a
@@ -231,6 +234,28 @@ class Engine:
     # ends: an empty screen between waves is normal, but run36 lost 2.3s
     # to an invisible outage and the log had no line to show for it.
     VISION_GAP_REPORT = 1.0
+    # Garbage guard (lockstep only): a fuzzy match typed off a scrap this
+    # short, or scoring under this floor, is more likely a phantom than a
+    # word -- and under a WPM cap its keys cost real time and can LOCK a
+    # real word ('A E'->AXE 0.80, 'WARLOC BROADSWORD'->PALADIN SWORD
+    # 0.64, run37).
+    MIN_FUZZY_LETTERS = 4
+    LOCKSTEP_MIN_SCORE = 0.70
+    # Blind-reveal handicap: a word first seen within this window after a
+    # lock ends may have spawned anywhere inside the lock -- charge it
+    # half the time it could have been hiding (capped). A word measured
+    # rising faster than RISE_YOUNG panel-heights/sec was just launched,
+    # which proves it newborn and cancels the charge (run37: SKULL BASHER
+    # hovered at its apex while RINGMASTER rose at ~180 px/s; equal
+    # ledger ages, but the basher was a second older and died).
+    REVEAL_WINDOW = 0.25
+    HANDICAP_CAP = 1.2
+    RISE_YOUNG = 0.075      # panel-heights per second, upward
+    # When a lock releases onto SEVERAL just-revealed words, one scan of
+    # patience buys the velocity measurement that tells old-hider from
+    # newborn -- committing the keyboard on the reveal scan is a coin
+    # flip. Hard-capped: past this age we commit with what we have.
+    REVEAL_MEASURE = 0.3
 
     def _process_lockstep(self, timestamp: float,
                           detections: list[Detection]) -> list[TypedWord]:
@@ -259,6 +284,20 @@ class Engine:
             det = entry.get("det")
             if det is None or not det.match:
                 continue
+            match = det.match
+            if match.score < 1.0 and match.source != "fallback":
+                # Garbage guard: under a WPM cap wrong keys are NOT free
+                # -- they cost keyboard time and can LOCK a word ('A E'
+                # ->AXE 0.80 stole the keyboard from a diving SKULL
+                # BASHER; 'WARLOC BROADSWORD'->PALADIN SWORD 0.64 typed
+                # an 11-key phantom whose 'w' locked WARLOCK, run37). A
+                # fuzzy match needs real evidence mass: enough letters
+                # read and a decent score. Fallback stays exempt -- it
+                # is the only shot at out-of-corpus words and already
+                # carries its own length and repeat gates.
+                if (len(to_key(det.raw)) < self.MIN_FUZZY_LETTERS
+                        or match.score < self.LOCKSTEP_MIN_SCORE):
+                    continue
             if timestamp - entry["last"] > self.FLICKER_WINDOW:
                 continue                    # believed gone (or truly dead)
             typed_end = entry.get("typed_end")
@@ -269,6 +308,18 @@ class Engine:
                     continue                # never seen again: presumed dead
             candidates.append((entry, det))
         candidates.sort(key=lambda c: self._urgency(c[1]))
+        # Measurement beat: several words revealed together by a lock
+        # release tie on ledger age, but their true ages differ by up to
+        # the whole lock (run37: RINGMASTER vs the second-older SKULL
+        # BASHER). If the pick would land on a reveal nobody has measured
+        # yet and another such reveal is competing, hold one scan -- the
+        # next sighting gives every contender a velocity, and a fast
+        # riser is provably newborn.
+        unmeasured = [e for e, _ in candidates
+                      if e.get("handicap") and e.get("vy") is None
+                      and timestamp - e["first"] < self.REVEAL_MEASURE]
+        if len(unmeasured) >= 2 and candidates[0][0] in unmeasured:
+            return []
         for entry, det in candidates:
             if not self.confirmer.ready(det, timestamp):
                 # an unstable garbage read must not block the queue --
@@ -278,6 +329,10 @@ class Engine:
             entry["typed_end"] = (timestamp
                                  + len(det.match.keystrokes)
                                  * self._char_seconds())
+            # The lock span: from now until the keys end, every other
+            # word renders near-invisible gray. Words first seen right
+            # after this window may have spawned anywhere inside it.
+            self._lock_span = (timestamp, entry["typed_end"])
             return [self._emit(timestamp, det)]             # rules 2 + 5
         return []
 
@@ -386,6 +441,12 @@ class Engine:
                         vy = (d.pos[1] - entry["pos"][1]) / dt
                         old = entry.get("vy")
                         entry["vy"] = vy if old is None else 0.6 * old + 0.4 * vy
+                        # A fast climb proves the word was just launched:
+                        # it cannot have been hiding through the lock.
+                        rise = (self.RISE_YOUNG
+                                * self.settings.geometry.panel_size[1])
+                        if entry.get("handicap") and entry["vy"] < -rise:
+                            entry["handicap"] = 0.0
                     entry["pos"] = d.pos
                     entry["last"] = timestamp
                     entry["det"] = d
@@ -393,10 +454,28 @@ class Engine:
             else:
                 self._ages.append({"name": d.name, "pos": d.pos,
                                    "first": timestamp, "last": timestamp,
-                                   "det": d})
+                                   "det": d,
+                                   "handicap": self._blind_handicap(timestamp)})
         self._ages = [e for e in self._ages
                       if timestamp - e["last"] <= self.AGE_FORGET]
         self._now = timestamp
+
+    def _blind_handicap(self, timestamp: float) -> float:
+        """Age to presume for a word first sighted around a lock's end.
+
+        During a lock every other label is near-invisible gray, so a
+        word revealed as the lock releases may have spawned anywhere
+        inside it; on average it is half the hidden span old. Run37:
+        SKULL BASHER spawned during HYPERSTONE's lock, surfaced with a
+        newborn's ledger age, lost the tie to a genuinely-young
+        RINGMASTER, and struck one second later."""
+        if self._lock_span is None:
+            return 0.0
+        start, end = self._lock_span
+        if start <= timestamp <= end + self.REVEAL_WINDOW:
+            hidden = min(timestamp, end) - start
+            return min(hidden / 2.0, self.HANDICAP_CAP)
+        return 0.0
 
     def _time_left(self, detection: Detection) -> float:
         """Seconds until this word dies, by the SOONEST of two clocks:
@@ -408,7 +487,8 @@ class Engine:
             if (entry["name"] == detection.name
                     and abs(entry["pos"][0] - detection.pos[0]) < self.AGE_MATCH_RADIUS
                     and abs(entry["pos"][1] - detection.pos[1]) < self.AGE_MATCH_RADIUS):
-                left = self.WORD_LIFETIME - (self._now - entry["first"])
+                left = (self.WORD_LIFETIME - (self._now - entry["first"])
+                        - entry.get("handicap", 0.0))
                 vy = entry.get("vy")
                 if vy is not None and abs(vy) > 30:
                     platform_y = self.PLATFORM[1] * self.settings.geometry.panel_size[1]

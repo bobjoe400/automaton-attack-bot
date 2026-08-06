@@ -299,13 +299,20 @@ class Detector:
 
         A long read that matched nothing (or only a fallback) may be two
         labels crossing: a combo died behind 2.3s of exactly that
-        blindness. The box splits proportionally at the cut so each word
-        keeps a sane position for urgency and dedup."""
+        blindness. A WEAK whole-read match gets the same treatment --
+        'WARLOC BROADSWORD' scraped PALADIN SWORD at 0.64 and the split
+        never ran, so the engine typed an 11-key phantom whose embedded
+        'w' locked the real WARLOCK (run37); the split is accepted only
+        when both halves clearly beat the whole. The box splits
+        proportionally at the cut so each word keeps a sane position for
+        urgency and dedup."""
         out = []
         attempts = 0
         for detection in detections:
-            if (detection.match is not None
-                    and detection.match.source != "fallback") or attempts >= 1:
+            whole = detection.match
+            solid = (whole is not None and whole.source != "fallback"
+                     and whole.score >= self.SPLIT_OVERRIDE_SCORE)
+            if solid or attempts >= 1:
                 out.append(detection)
                 continue
             text = detection.raw.strip()
@@ -314,6 +321,10 @@ class Detector:
                 continue
             attempts += 1
             parts = self.lexicon.split_match(detection.raw)
+            if parts and whole is not None and whole.source != "fallback":
+                floor = whole.score + 0.05
+                if min(p.score for p in parts) < floor:
+                    parts = []
             if not parts:
                 out.append(detection)
                 continue
@@ -347,6 +358,10 @@ class Detector:
     # A wrapped phrase's second line starts within a line-height below the
     # first; a merge is accepted only on a confident corpus match.
     STITCH_MIN_SCORE = 0.85
+    # Whole-read matches below this are weak enough that a two-word split
+    # interpretation gets a chance to beat them (see
+    # _split_horizontal_merges).
+    SPLIT_OVERRIDE_SCORE = 0.80
 
     def _stitch_wrapped_lines(
             self, detections: list[Detection]) -> list[Detection]:

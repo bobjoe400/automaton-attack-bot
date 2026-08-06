@@ -238,7 +238,11 @@ class Lexicon:
     # Halves of a split garble must each clear this score to accept the
     # split; the vocab floor (0.62) is too generous for fragments.
     SPLIT_MIN_SCORE = 0.70
-    SPLIT_MIN_LENGTH = 20
+    # Two labels crossing can be as short as two hero names: 'WARLOC
+    # BROADSWORD' (17 chars) sat under the old floor of 20, whole-matched
+    # PALADIN SWORD at 0.64, and the phantom's embedded 'w' locked the
+    # real WARLOCK (run37).
+    SPLIT_MIN_LENGTH = 12
 
     def split_match(self, raw: str) -> list[Match]:
         """Resolve a two-word horizontal merge into both its words.
