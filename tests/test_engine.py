@@ -665,3 +665,29 @@ def test_reveal_measurement_beat_cannot_stall():
     # Neither is re-seen (velocities stay unknown), but the beat expires:
     out = engine.process_detections(1.60, [])
     assert [w.name for w in out] == ["KAYA"]        # tie rule: shorter
+
+
+def test_unfinishable_words_yield_to_savable_ones():
+    """Run38: PLATEMAIL was typed with 0.45s left on a measured 400px/s
+    dive -- 9 keys need 1.1s, so it died 4 keys in and the stray 'm'
+    locked MEKANSM, whose lock then ate LINA. A word that cannot finish
+    before its deadline sorts behind every word that can (it is lost
+    either way; the queue behind it is not) but still types on an
+    otherwise-free keyboard."""
+    settings = wpm_settings(100.0)
+    engine = Engine(FakeDetector([], settings),
+                    DryRunTypist(settings.behaviour), settings)
+    engine.queue_keystrokes = lambda: 5              # observe only
+    plate0 = detection("PLATEMAIL", 1.0, pos=(600, 300))
+    plate1 = detection("PLATEMAIL", 1.0, pos=(600, 560))
+    lina = detection("LINA", 1.0, pos=(200, 500))
+    engine.process_detections(0.0, [plate0, lina])
+    engine.process_detections(0.7, [plate1, lina])
+    engine.queue_keystrokes = lambda: 0
+    # PLATEMAIL: ~370 px/s toward the platform, ~0.3s out -- doomed
+    # (9 keys at 0.12s); LINA is fresh and finishable. LINA first,
+    # then the free keyboard still tries the corpse.
+    out = engine.process_detections(0.8, [plate1, lina])
+    assert [w.name for w in out] == ["LINA"]
+    out = engine.process_detections(1.5, [plate1, lina])
+    assert [w.name for w in out] == ["PLATEMAIL"]

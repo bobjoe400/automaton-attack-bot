@@ -256,6 +256,11 @@ class Engine:
     # newborn -- committing the keyboard on the reveal scan is a coin
     # flip. Hard-capped: past this age we commit with what we have.
     REVEAL_MEASURE = 0.3
+    # A word is only worth the keyboard if it can finish this much
+    # service time before its deadline; the margin absorbs deadline
+    # optimism (ledger ages start at first SIGHTING, which trails the
+    # true spawn).
+    FEASIBLE_MARGIN = 1.15
 
     def _process_lockstep(self, timestamp: float,
                           detections: list[Detection]) -> list[TypedWord]:
@@ -307,7 +312,23 @@ class Engine:
                 if entry["last"] <= typed_end:
                     continue                # never seen again: presumed dead
             candidates.append((entry, det))
-        candidates.sort(key=lambda c: self._urgency(c[1]))
+        # Feasibility-first EDF: a word that cannot FINISH before its
+        # measured deadline is a corpse-in-waiting -- typing it wastes
+        # the keyboard AND leaks its remaining letters into whatever
+        # word they happen to lock (run38: PLATEMAIL died 4 keys in, the
+        # stray 'm' locked MEKANSM, MEKANSM's lock ate LINA -- one
+        # infeasible pick, two combo losses; DROW RANGER at deadline
+        # 1.25s vs 1.22s of typing ghosted 8 keys while the savable
+        # LESHRAC and FORCE STAFF both struck behind it). Unfinishable
+        # words sort behind every finishable one but stay in the queue:
+        # deadlines are estimates, and a free keyboard still tries them.
+        def rank(c):
+            entry, det = c
+            urgency = self._urgency(det)
+            need = (len(det.match.keystrokes) * self._char_seconds()
+                    * self.FEASIBLE_MARGIN)
+            return (urgency[0] < need, urgency)
+        candidates.sort(key=rank)
         # Measurement beat: several words revealed together by a lock
         # release tie on ledger age, but their true ages differ by up to
         # the whole lock (run37: RINGMASTER vs the second-older SKULL
