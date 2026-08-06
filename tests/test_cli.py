@@ -3,15 +3,21 @@
 from automaton_attack_bot.cli import build_parser
 
 
-def test_bare_invocation_is_the_play_command():
-    """Everything run-like lives directly on `automaton` -- there is no
-    'run' subcommand."""
+def test_bare_invocation_opens_the_control_panel():
+    """No subcommand means GUI; --cli plays in the terminal instead."""
     args = build_parser().parse_args([])
-    assert args.command is None       # dispatched to the play loop
+    assert args.command is None
+    assert not args.cli               # dispatched to the control panel
     assert args.monitor == "auto"
     assert not args.no_auto_start     # auto-start is on by default
     assert not args.dry_run           # typing is the default
     assert args.rounds == 1
+
+
+def test_cli_flag_selects_the_terminal_play_loop():
+    args = build_parser().parse_args(["--cli", "--rounds", "2"])
+    assert args.cli
+    assert args.rounds == 2
 
 
 def test_play_flags_parse_at_top_level():

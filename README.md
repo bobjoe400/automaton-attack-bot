@@ -14,7 +14,7 @@ Requires [uv](https://docs.astral.sh/uv/) — no system packages.
 
 ```bash
 git clone git@github.com:bobjoe400/automaton-attack-bot.git && cd automaton-attack-bot
-uv sync --extra live
+uv sync
 uv run automaton doctor
 ```
 
@@ -24,8 +24,11 @@ Open the minigame in Dota, then:
 uv run automaton
 ```
 
-That finds the Dota window, clicks PLAY, types the round, reports the score
-and exits. First run downloads ~70 MB of word data (once) from
+That opens the control panel — hit Start and the bot finds the Dota window,
+clicks PLAY, types the round, and reports the score. The panel also fronts
+the tools (doctor, analyze, replay, match, data update). Prefer the
+terminal? `uv run automaton --cli` plays headless, same behaviour. First
+run downloads ~70 MB of word data (once) from
 [odota/dotaconstants](https://github.com/odota/dotaconstants) and
 [mdiller/dotabase](https://github.com/mdiller/dotabase) — the community
 projects that did the hard part.
@@ -33,8 +36,8 @@ projects that did the hard part.
 Useful variations:
 
 ```bash
-uv run automaton --dry-run     # rehearse: print everything, touch nothing
-uv run automaton --rounds 3    # play several games back to back
+uv run automaton --cli --dry-run   # rehearse in the terminal, touch nothing
+uv run automaton --cli --rounds 3  # play several games back to back
 ```
 
 Every run writes a full-detail log to `logs/run-<stamp>.log`; the console
@@ -43,14 +46,16 @@ shows only state changes, combo telemetry and scores.
 ## No Python? Download a release
 
 Each [release](https://github.com/bobjoe400/automaton-attack-bot/releases)
-ships `automaton-attack-bot-win64.zip` — unzip and run `automaton.exe` from
-a terminal; same commands as above. The exe is built exclusively by the
-[release workflow](.github/workflows/release.yml) on GitHub's runners,
-never on anyone's machine, and every build is provenance-attested. To prove
-your download is byte-for-byte what that workflow built from this code:
+ships a single `automaton.exe` — download it and double-click for the
+control panel (first launch unpacks for a couple of seconds), or run it
+from a terminal for the same commands as above. The exe is built
+exclusively by the [release workflow](.github/workflows/release.yml) on
+GitHub's runners, never on anyone's machine, and every build is
+provenance-attested. To prove your download is byte-for-byte what that
+workflow built from this code:
 
 ```bash
-gh attestation verify automaton-attack-bot-win64.zip --repo bobjoe400/automaton-attack-bot
+gh attestation verify automaton.exe --repo bobjoe400/automaton-attack-bot
 ```
 
 (Windows will still show an "unrecognized app" warning — the zip is
@@ -60,8 +65,8 @@ attested, not Authenticode-signed.)
 
 | Command | What it does |
 | --- | --- |
-| *(none)* | Play a round (`--dry-run` to rehearse, `--rounds N` for several) |
-| `analyze CLIP` | Report likely misses from a recording: platform strikes, weak/unmatched reads |
+| *(none)* | Open the control panel (`--cli` to play in the terminal instead) |
+| `analyze CLIP` | Report misses and per-word screen time from a recording (`--stride 1` for frame-exact) |
 | `replay CLIP` | Run detection over a recording; never types |
 | `doctor` | Check dependencies, OCR backends and data files |
 | `match TEXT` | Ask the lexicon what an OCR read resolves to |

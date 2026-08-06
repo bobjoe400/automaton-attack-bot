@@ -27,16 +27,25 @@ class DryRunTypist:
 
     live = False
 
-    def __init__(self, behaviour: Behaviour | None = None) -> None:
+    def __init__(self, behaviour: Behaviour | None = None,
+                 origin: tuple[int, int] = (0, 0)) -> None:
         self.behaviour = behaviour or Behaviour()
+        self.origin = origin
         self.typed: list[str] = []
         self.clicked: list[tuple[int, int]] = []
+        self.last_key_times: list[float] = []
 
-    def type(self, text: str) -> None:
+    def type(self, text: str, should_abort=None) -> None:
+        now = time.monotonic()
+        self.last_key_times = [now] * len(text)
         self.typed.append(text)
 
     def click(self, x: int, y: int) -> None:
-        self.clicked.append((x, y))
+        """x, y are frame (captured-monitor) coordinates; the click goes
+        to virtual-screen absolute. On a non-primary monitor the two
+        differ by the monitor's origin -- clicks used to land on the
+        wrong monitor entirely."""
+        self.clicked.append((x + self.origin[0], y + self.origin[1]))
 
 
 class DirectInputTypist:
@@ -44,18 +53,23 @@ class DirectInputTypist:
 
     live = True
 
-    def __init__(self, behaviour: Behaviour | None = None) -> None:
+    def __init__(self, behaviour: Behaviour | None = None,
+                 origin: tuple[int, int] = (0, 0)) -> None:
         try:
             import pydirectinput
         except ImportError as exc:  # pragma: no cover - env dependent
             raise RuntimeError(
-                "pydirectinput is not installed. Run: uv sync --extra live"
+                "pydirectinput is not installed. Run: uv sync"
             ) from exc
         pydirectinput.PAUSE = 0
         self._pydirectinput = pydirectinput
         self.behaviour = behaviour or Behaviour()
+        self.origin = origin
         self.typed: list[str] = []
         self.clicked: list[tuple[int, int]] = []
+        # Monotonic send time of every key of the last word, recorded at
+        # keyDown -- the audit trail for keystroke-level forensics.
+        self.last_key_times: list[float] = []
         self._min_seconds_per_char = self._pace()
 
     def _pace(self) -> float:
@@ -69,22 +83,46 @@ class DirectInputTypist:
             return 0.0
         return 60.0 / (wpm * 5.0)   # 5 characters per "word", by convention
 
-    def type(self, text: str) -> None:
+    def type(self, text: str, should_abort=None) -> None:
+        """Send the keystrokes, pacing to the WPM cap when one is set.
+
+        Throttled keys are HELD for part of the interval: press() taps
+        with zero hold, and a zero-length tap can fall between the
+        game's input polls entirely -- at 150 WPM the tracker consumed
+        ~1 of every 3 keys (DAZZLE: 6 sent in 0.5s, accepted over 1.5s;
+        SHADOW BLADE: 11 sent, 1 accepted, word struck). Full speed
+        keeps the plain tap: burst input lands, and the records were
+        set with it.
+        """
+        key_times = []
         for char in text:
-            self._pydirectinput.press(char)
+            if should_abort is not None and should_abort():
+                break       # the target vanished; the rest would be ghosts
             delay = max(random.uniform(*self.behaviour.key_delay),
                         self._min_seconds_per_char)
+            key_times.append(time.monotonic())
             if delay > 0:
-                time.sleep(delay)
+                hold = min(0.05, delay * 0.4)
+                self._pydirectinput.keyDown(char)
+                time.sleep(hold)
+                self._pydirectinput.keyUp(char)
+                time.sleep(max(0.0, delay - hold))
+            else:
+                self._pydirectinput.press(char)
+        self.last_key_times = key_times
         self.typed.append(text)
 
     def click(self, x: int, y: int) -> None:
-        self._pydirectinput.click(x, y)
-        self.clicked.append((x, y))
+        """Frame coordinates in, virtual-screen click out (see DryRunTypist
+        .click)."""
+        absolute = (x + self.origin[0], y + self.origin[1])
+        self._pydirectinput.click(*absolute)
+        self.clicked.append(absolute)
 
 
-def make_typist(live: bool, behaviour: Behaviour | None = None):
-    return (DirectInputTypist if live else DryRunTypist)(behaviour)
+def make_typist(live: bool, behaviour: Behaviour | None = None,
+                origin: tuple[int, int] = (0, 0)):
+    return (DirectInputTypist if live else DryRunTypist)(behaviour, origin)
 
 
 class TypingWorker(threading.Thread):
@@ -120,6 +158,19 @@ class TypingWorker(threading.Thread):
         self._pending: list[tuple[object, float]] = []
         self._condition = threading.Condition()
         self._stopped = False
+        self._typing_keys = 0   # keystrokes of the word being typed now
+
+    def pending_keystrokes(self) -> int:
+        """Keystrokes queued plus in-progress -- the keyboard's backlog.
+
+        The engine stretches its dedup windows by this backlog's service
+        time: with --max-wpm a word is still being typed long after it
+        was submitted, and treating it as 'typed but still visible'
+        double-queued nearly every word of a throttled round.
+        """
+        with self._condition:
+            queued = sum(len(w.keystrokes) for w, _ in self._pending)
+        return queued + self._typing_keys
 
     def submit(self, word) -> None:
         with self._condition:
@@ -166,7 +217,11 @@ class TypingWorker(threading.Thread):
             if self._triage(word):
                 self.dropped_triage += 1
                 continue
-            self.typist.type(word.keystrokes)
+            self._typing_keys = len(word.keystrokes)
+            try:
+                self.typist.type(word.keystrokes)
+            finally:
+                self._typing_keys = 0
             if self.on_typed:
                 self.on_typed(word, waited)
 

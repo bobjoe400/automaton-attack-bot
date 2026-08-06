@@ -2,8 +2,8 @@
 
 import pytest
 
-from automaton_attack_bot.config import Matching
-from automaton_attack_bot.lexicon import Lexicon, to_key
+from automaton_attack_bot.core.config import Matching
+from automaton_attack_bot.core.lexicon import Lexicon, to_key
 
 
 @pytest.fixture(scope="module")
@@ -132,7 +132,7 @@ def test_recent_patch_items_are_present(vocab_only):
 def test_ocr_output_is_ascii_safe():
     """PP-OCR emits CJK punctuation for glyph fragments; it must never
     reach the console (cp1252 crashes) or the matcher."""
-    from automaton_attack_bot.ocr import clean_text
+    from automaton_attack_bot.core.ocr import clean_text
 
     assert clean_text("TOWER\u3001") == "TOWER"
     assert clean_text("\u3001\uff0c") == ""
@@ -214,3 +214,47 @@ def test_ambiguous_fragments_keep_waiting(vocab_only):
     match = vocab_only.match("MASK")
     assert match is None or match.name not in (
         "MORBID MASK", "VOODOO MASK", "MASK OF MADNESS")
+
+
+# -- horizontal merge splitting ----------------------------------------------
+def _phrase_lexicon():
+    from automaton_attack_bot.core.lexicon import Lexicon
+
+    return Lexicon(
+        ["Axe", "Ring of Protection"],
+        phrases=["You were too noisy to live.",
+                 "Axe likes this very much.",
+                 "Could be worse. Oh, wait, no it couldn't."],
+    )
+
+
+def test_split_match_reads_two_crossed_phrases():
+    """Two labels crossing at the same height OCR as one garble; the
+    whole-read matcher found nothing for 2.3s and a combo died behind
+    that blindness. Splitting at a middle space reads both."""
+    lexicon = _phrase_lexicon()
+    parts = lexicon.split_match(
+        "YOU WERE TOO NOISY TO LE LIKES F HIS VERY MUCH.")
+    assert {p.name for p in parts} == {"YOU WERE TOO NOISY TO LIVE.",
+                                       "AXE LIKES THIS VERY MUCH."}
+
+
+def test_split_match_rejects_short_or_clean_reads():
+    lexicon = _phrase_lexicon()
+    assert lexicon.split_match("RING OF") == []
+    assert lexicon.split_match("TOTAL GIBBERISH WITH SPACES IN IT") == []
+
+
+def test_detector_splits_an_unmatched_merge_into_two_detections():
+    from automaton_attack_bot.core.config import Settings
+    from automaton_attack_bot.core.detect import Detection, Detector
+
+    detector = Detector(_phrase_lexicon(), backend=None, settings=Settings())
+    garble = Detection(box=(200, 400, 600, 22),
+                       raw="YOU WERE TOO NOISY TO LE LIKES F HIS VERY MUCH.",
+                       match=None)
+    out = detector._split_horizontal_merges([garble])
+    assert [d.name for d in out] == ["YOU WERE TOO NOISY TO LIVE.",
+                                     "AXE LIKES THIS VERY MUCH."]
+    assert out[0].box[0] == 200 and out[1].box[0] > 200
+    assert out[0].box[2] + out[1].box[2] == 600

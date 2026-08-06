@@ -1,6 +1,6 @@
 """Settings persistence and resolution scaling."""
 
-from automaton_attack_bot.config import REFERENCE_RESOLUTION, Settings
+from automaton_attack_bot.core.config import REFERENCE_RESOLUTION, Settings
 
 
 def test_defaults_match_the_measured_geometry():

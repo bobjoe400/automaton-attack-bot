@@ -14,8 +14,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from automaton_attack_bot import autocolor
-from automaton_attack_bot.config import Settings
+from automaton_attack_bot.core import autocolor
+from automaton_attack_bot.core.config import Settings
 
 CLIPS = (Path("clips") / "clip1.mp4", Path("clips") / "clip2.mp4")
 FRAMES_PER_CLIP = 8

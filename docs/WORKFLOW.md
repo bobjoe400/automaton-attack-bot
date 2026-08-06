@@ -9,10 +9,12 @@ the artifacts back —
 
 1. `logs/run-<stamp>.log` — the combo telemetry pins any loss to a round
    clock; the per-scan detail shows exactly what was read at that moment.
-2. `automaton analyze recording.mp4` — names words that reached the platform
-   and stable reads with weak or missing matches.
+2. `automaton analyze recording.mp4` — names words that reached the platform,
+   stable reads with weak or missing matches, and per-word screen time
+   with anything that lingered flagged by name and round clock. Use
+   `--stride 1` for frame-exact lifetimes (slower; progress is printed).
 3. Real words the corpus lacks go one-per-line into
-   [custom_vocab.txt](src/automaton_attack_bot/data/custom_vocab.txt) — applied
+   [custom_vocab.txt](../src/automaton_attack_bot/data/custom_vocab.txt) — applied
    at load, no rebuild. Trust observation over documentation: several
    "retired" words turned out to be live targets.
 
@@ -47,7 +49,7 @@ elsewhere; override with `AUTOMATON_DATA_DIR`):
 
 Both track Valve's patches, so `automaton update-data` after a patch is the
 whole maintenance story. The one hand-maintained file is
-[custom_vocab.txt](src/automaton_attack_bot/data/custom_vocab.txt): words seen in
+[custom_vocab.txt](../src/automaton_attack_bot/data/custom_vocab.txt): words seen in
 the minigame that upstream doesn't carry (event words like `Banana` and
 `Screeauk`, renamed heroes, voice lines the game renders differently), and
 retired items to exclude so they can't steal fuzzy matches from live ones.

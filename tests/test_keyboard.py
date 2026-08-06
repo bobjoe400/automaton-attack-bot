@@ -2,11 +2,11 @@
 
 import time
 
-from automaton_attack_bot.config import Settings
-from automaton_attack_bot.detect import Detection
-from automaton_attack_bot.engine import Engine, TypedWord
-from automaton_attack_bot.keyboard import DryRunTypist, TypingWorker
-from automaton_attack_bot.lexicon import Match
+from automaton_attack_bot.core.config import Settings
+from automaton_attack_bot.core.detect import Detection
+from automaton_attack_bot.core.engine import Engine, TypedWord
+from automaton_attack_bot.core.keyboard import DryRunTypist, TypingWorker
+from automaton_attack_bot.core.lexicon import Match
 
 
 def word(name, pos, timestamp=0.0):
@@ -34,12 +34,16 @@ def drain(worker, expected, timeout=3.0):
 
 
 def test_most_urgent_word_types_first():
+    """The worker pops by whatever urgency function it is given -- here
+    a fixed priority map (the engine's real ranking is age/velocity)."""
+    priorities = {"PUDGE": 0, "LINA": 1, "BANE": 2}
     typist = DryRunTypist()
-    worker = TypingWorker(typist, urgency)
+    worker = TypingWorker(typist,
+                          lambda det: priorities.get(det.name, 9))
     # submit before starting so ordering is deterministic
-    worker.submit(word("BANE", (60, 40)))            # far corner
-    worker.submit(word("PUDGE", (430, 580)))         # at the platform
-    worker.submit(word("LINA", (450, 900)))          # bottom spawn
+    worker.submit(word("BANE", (60, 40)))
+    worker.submit(word("PUDGE", (430, 580)))
+    worker.submit(word("LINA", (450, 900)))
     worker.start()
     drain(worker, 3)
     worker.stop()
@@ -93,8 +97,8 @@ def test_weak_guesses_are_triaged_when_the_queue_is_deep():
     """Keyboard time is the scarce resource under load: a 0.67 fly-in
     partial gets retyped correctly a scan later anyway, so it loses its
     seat when 3+ words are waiting."""
-    from automaton_attack_bot.detect import Detection
-    from automaton_attack_bot.lexicon import Match
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Match
 
     typist = DryRunTypist()
     worker = TypingWorker(typist, urgency)
@@ -122,8 +126,8 @@ def test_weak_guesses_are_triaged_when_the_queue_is_deep():
 
 
 def test_weak_guesses_type_when_the_queue_is_shallow():
-    from automaton_attack_bot.detect import Detection
-    from automaton_attack_bot.lexicon import Match
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Match
 
     typist = DryRunTypist()
     worker = TypingWorker(typist, urgency)
@@ -134,3 +138,34 @@ def test_weak_guesses_type_when_the_queue_is_shallow():
     drain(worker, 1)
     worker.stop()
     assert typist.typed == ["rot"]
+
+
+def test_clicks_translate_frame_coords_to_the_capture_monitor():
+    """Frames are monitor-relative, clicks are virtual-screen absolute; on
+    a non-primary monitor the difference sent PLAY clicks to the wrong
+    screen entirely."""
+    from automaton_attack_bot.core.keyboard import DryRunTypist
+
+    typist = DryRunTypist(origin=(2560, -180))
+    typist.click(965, 979)
+    assert typist.clicked == [(3525, 799)]
+
+
+def test_default_origin_leaves_clicks_untouched():
+    from automaton_attack_bot.core.keyboard import DryRunTypist
+
+    typist = DryRunTypist()
+    typist.click(965, 979)
+    assert typist.clicked == [(965, 979)]
+
+
+def test_pending_keystrokes_counts_the_queue():
+    from automaton_attack_bot.core.engine import TypedWord
+    from automaton_attack_bot.core.keyboard import TypingWorker
+
+    worker = TypingWorker(typist=None, urgency=lambda d: 0)
+    word = lambda keys: TypedWord(0.0, None, keys)  # noqa: E731
+    worker.submit(word("skullbasher"))
+    worker.submit(word("axe"))
+    worker.submit(word("axe"))          # duplicate keystrokes: not queued
+    assert worker.pending_keystrokes() == len("skullbasher") + len("axe")

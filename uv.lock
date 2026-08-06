@@ -17,21 +17,19 @@ wheels = [
 
 [[package]]
 name = "automaton-attack-bot"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "mss" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "opencv-python" },
+    { name = "pydirectinput", marker = "sys_platform == 'win32'" },
     { name = "rapidfuzz" },
     { name = "rapidocr-onnxruntime" },
 ]
 
 [package.optional-dependencies]
-live = [
-    { name = "mss" },
-    { name = "pydirectinput" },
-]
 tesseract = [
     { name = "pytesseract" },
 ]
@@ -44,15 +42,15 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mss", marker = "extra == 'live'", specifier = ">=9.0" },
+    { name = "mss", specifier = ">=9.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python", specifier = ">=4.9" },
-    { name = "pydirectinput", marker = "extra == 'live'", specifier = ">=1.0.4" },
+    { name = "pydirectinput", marker = "sys_platform == 'win32'", specifier = ">=1.0.4" },
     { name = "pytesseract", marker = "extra == 'tesseract'", specifier = ">=0.3.10" },
     { name = "rapidfuzz", specifier = ">=3.6" },
     { name = "rapidocr-onnxruntime", specifier = ">=1.3" },
 ]
-provides-extras = ["live", "tesseract"]
+provides-extras = ["tesseract"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -3,11 +3,11 @@
 import numpy as np
 import pytest
 
-from automaton_attack_bot.config import Settings
-from automaton_attack_bot.detect import Detection
-from automaton_attack_bot.engine import Confirmer, Deduper, Engine
-from automaton_attack_bot.keyboard import DryRunTypist
-from automaton_attack_bot.lexicon import Match
+from automaton_attack_bot.core.config import Settings
+from automaton_attack_bot.core.detect import Detection
+from automaton_attack_bot.core.engine import Confirmer, Deduper, Engine
+from automaton_attack_bot.core.keyboard import DryRunTypist
+from automaton_attack_bot.core.lexicon import Match
 
 
 def detection(name, score, pos=(100, 100), raw=None, source="vocab"):
@@ -181,7 +181,7 @@ def test_dry_run_typist_sends_nothing_live():
 
 # -- monitor picking -------------------------------------------------------
 def test_pick_monitor_prefers_the_overlapping_screen():
-    from automaton_attack_bot.capture import pick_monitor
+    from automaton_attack_bot.core.capture import pick_monitor
 
     monitors = [
         {"left": 0, "top": 0, "width": 3840, "height": 1080},      # virtual
@@ -197,7 +197,7 @@ def test_pick_monitor_prefers_the_overlapping_screen():
 
 
 def test_pick_monitor_with_no_overlap_returns_none():
-    from automaton_attack_bot.capture import pick_monitor
+    from automaton_attack_bot.core.capture import pick_monitor
 
     monitors = [
         {"left": 0, "top": 0, "width": 1920, "height": 1080},
@@ -206,16 +206,18 @@ def test_pick_monitor_with_no_overlap_returns_none():
     assert pick_monitor((-5000, -5000, -4000, -4000), monitors) is None
 
 
-def test_words_nearest_the_platform_type_first():
-    """Automatons converge on Hoodwink at panel-centre; the word about to
-    reach her must not wait behind a fresh spawn. Spawns from below start
-    close to the platform (but above the strike band -- anything below
-    that is already dead)."""
-    far_top = detection("BANE", 1.0, pos=(60, 40))
-    near_platform = detection("PUDGE", 1.0, pos=(430, 580))
-    below_spawn = detection("LINA", 1.0, pos=(450, 620))
-    typed, typist, _ = run_engine([[far_top, near_platform, below_spawn]])
-    assert typist.typed == ["lina", "pudge", "bane"]
+def test_older_words_type_first():
+    """Position without motion says almost nothing (trajectory speed
+    varies with spawn height); the ledger's clocks -- age and measured
+    velocity -- are the urgency signal. Oldest first."""
+    settings = Settings()
+    engine = Engine(FakeDetector([], settings), DryRunTypist(), settings)
+    old = detection("BANE", 1.0, pos=(60, 40))
+    young = detection("PUDGE", 1.0, pos=(430, 500))
+    engine.queue_keystrokes = lambda: 5
+    engine.process_detections(0.0, [old])
+    engine.process_detections(1.5, [old, young])
+    assert engine._urgency(old) < engine._urgency(young)
 
 
 # -- verbatim insurance ------------------------------------------------------
@@ -250,16 +252,25 @@ def test_short_weak_reads_get_no_insurance():
     assert typist.typed == ["cloak"]
 
 
-def test_long_phrases_win_the_tie_at_equal_range():
-    """Urgency is deadline MINUS service time, so at equal range the
-    longer keystroke burden starts first. (At full typing speed the
-    service term is small, but the tie-break still matters: two phrases
-    once died queued behind each other.)"""
+def test_ties_break_shorter_first_then_alphabetical():
+    """The hard tie rule (run36): words spawning on the same scan share
+    a deadline to the decimal, and the order used to fall to ledger
+    insertion order -- chance. Now the shorter word types first (it
+    frees the keyboard soonest, so a tight pair has the best odds of
+    both surviving), and equal lengths break alphabetically."""
     phrase = detection("TOLD YOU A STORM WAS COMING!", 1.0, pos=(300, 300),
                        source="phrase")
     word = detection("AXE", 1.0, pos=(300, 300))
-    typed, typist, _ = run_engine([[word, phrase]])
-    assert typist.typed[0] == "toldyouastormwascoming"
+    typed, typist, _ = run_engine([[phrase, word]])
+    assert typist.typed[0] == "axe"
+
+    settings = Settings()
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(FakeDetector([], settings), typist, settings)
+    engine.process_detections(
+        1.0, [detection("SVEN", 1.0), detection("LION", 1.0,
+                                                pos=(430, 580))])
+    assert typist.typed == ["lion", "sven"]   # equal length: L before S
 
 
 def test_process_detections_matches_process():
@@ -269,17 +280,17 @@ def test_process_detections_matches_process():
     typist = DryRunTypist(settings.behaviour)
     engine = Engine(FakeDetector([], settings), typist, settings)
     words = engine.process_detections(
-        1.0, [detection("BANE", 1.0), detection("PUDGE", 1.0,
-                                                pos=(430, 580))])
-    assert [w.name for w in words] == ["PUDGE", "BANE"]   # urgency order
-    assert typist.typed == ["pudge", "bane"]
+        1.0, [detection("PUDGE", 1.0, pos=(430, 580)),
+              detection("BANE", 1.0)])
+    assert [w.name for w in words] == ["BANE", "PUDGE"]   # urgency order
+    assert typist.typed == ["bane", "pudge"]
 
 
 def test_embedded_words_type_from_weak_cluster_reads():
     """VISAGE died with one letter typed inside an interleaved pile-up.
     A weak merged read containing a vocab key letter-perfect types that
     word immediately."""
-    from automaton_attack_bot.lexicon import Lexicon
+    from automaton_attack_bot.core.lexicon import Lexicon
 
     settings = Settings()
     detector = FakeDetector([], settings)
@@ -301,3 +312,382 @@ def test_strike_band_corpses_are_never_typed():
     living = detection("TANGO", 1.0, pos=(461, 600))
     typed, typist, _ = run_engine([[corpse, living]])
     assert typist.typed == ["tango"]
+
+
+# -- stacked bundles ---------------------------------------------------------
+def stacked(name, rank, group, pos):
+    """A word that is one line of a taller pile."""
+    return Detection(
+        box=(pos[0], pos[1], 120, 20),
+        raw=name,
+        match=Match(name, 1.0, "vocab"),
+        group_box=group,
+        stack_rank=rank,
+    )
+
+
+def test_stacks_type_top_first_regardless_of_range():
+    """The game only accepts the TOP word of a pile: bundles lingered
+    while we typed ineligible lower words, then vanished all at once when
+    the retype cycle finally hit the top one. Top-first, always -- even
+    though the bottom word is nearest the platform."""
+    group = (400, 500, 140, 80)
+    bottom = stacked("PUDGE", 2, group, (400, 560))
+    middle = stacked("BANE", 1, group, (400, 530))
+    top = stacked("MARCI", 0, group, (400, 500))
+    typed, typist, _ = run_engine([[bottom, middle, top]])
+    assert typist.typed == ["marci", "bane", "pudge"]
+
+
+def test_a_stack_orders_by_rank_at_equal_age():
+    """Same-scan stack members and lone words tie on age; the rank
+    penalty keeps piles typing top-first without position mattering."""
+    group = (430, 560, 140, 60)
+    pile_top = stacked("LINA", 0, group, (430, 560))
+    pile_low = stacked("BANE", 1, group, (430, 590))
+    typed, typist, _ = run_engine([[pile_low, pile_top]])
+    assert typist.typed[0] == "lina"
+
+
+def test_separate_blobs_that_bundle_type_top_first():
+    """The MAGIC WAND case: a phrase 16px above a word, separate blobs,
+    one in-game bundle. The wand's first keystrokes were eaten while the
+    phrase above held the top slot -- so the phrase must type first even
+    though the word below is nearer the platform."""
+    phrase = Detection(box=(300, 423, 520, 20), raw="YOU'RE IN OVER YOUR HEAD.",
+                       match=Match("YOU'RE IN OVER YOUR HEAD.", 1.0, "phrase"))
+    wand = Detection(box=(430, 459, 200, 20), raw="MAGIC WAND",
+                     match=Match("MAGIC WAND", 1.0, "vocab"))
+    typed, typist, _ = run_engine([[wand, phrase]])
+    assert typist.typed == ["youreinoveryourhead", "magicwand"]
+
+
+def test_side_by_side_words_do_not_bundle():
+    """Horizontally separate words at similar heights are independent --
+    no stack rank is assigned, so plain urgency order applies (equal
+    deadlines here, so the tie rule: shorter word first)."""
+    left = detection("BANE", 1.0, pos=(100, 420))
+    right = detection("PUDGE", 1.0, pos=(700, 430))
+    typed, typist, _ = run_engine([[left, right]])
+    assert typist.typed == ["bane", "pudge"]
+
+
+# -- danger-zone retype ------------------------------------------------------
+def run_clocked(frames, settings=None, step=0.5):
+    """Like run_engine, but with a controllable dedup clock."""
+    settings = settings or Settings()
+    detector = FakeDetector(frames, settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    clock = FakeClock()
+    engine.deduper = Deduper(radius=settings.behaviour.dedup_radius,
+                             ttl=settings.behaviour.dedup_ttl, clock=clock)
+    blank = np.zeros((4, 4, 3), np.uint8)
+    for index in range(len(frames)):
+        engine.process(index * step, blank)
+        clock.advance(step)
+    return typist
+
+
+def test_a_deep_word_that_would_not_die_retypes_fast():
+    """LEGION COMMANDER: typed once, keys eaten by the bundle above, and
+    it stayed ALIVE for 2.5s -- a killed word vanishes instantly, so a
+    typed word still visible needs retyping. Direction is irrelevant:
+    bottom-spawned words RISE toward the platform (Legion rose the whole
+    time); a sinking-only gate once cost it 1.6 extra seconds."""
+    typed_at = detection("LEGION COMMANDER", 1.0, pos=(222, 643))
+    risen = detection("LEGION COMMANDER", 1.0, pos=(236, 613))
+    typist = run_clocked([[typed_at], [risen]], step=0.5)
+    assert typist.typed == ["legioncommander", "legioncommander"]
+
+
+def test_a_shallow_word_keeps_the_calm_dedup_window():
+    shallow = detection("BANE", 1.0, pos=(100, 100))
+    typist = run_clocked([[shallow], [shallow]], step=0.5)
+    assert typist.typed == ["bane"]
+
+
+def test_replay_ttls_disable_the_danger_retype():
+    """On tape a typed word never disappears; replays floor dedup_ttl at
+    3.0 and must not rapid-fire retypes at deep words."""
+    data = Settings().to_dict()
+    data["behaviour"]["dedup_ttl"] = 3.0
+    settings = Settings.from_dict(data)
+    deep = detection("WRAITH KING", 1.0, pos=(430, 545))
+    typist = run_clocked([[deep], [deep]], settings=settings, step=0.5)
+    assert typist.typed == ["wraithking"]
+
+
+def test_throttled_typing_does_not_double_type():
+    """Run25 at 100 WPM: nearly every word typed TWICE. A capped word is
+    still being typed when the instant-typing dedup window expires, so
+    the window stretches by the word's own service time. (With several
+    words visible there is no held lock, so the sole-visible fast refeed
+    does not apply.)"""
+    data = Settings().to_dict()
+    data["behaviour"]["max_wpm"] = 100.0
+    settings = Settings.from_dict(data)
+    deep = detection("SKULL BASHER", 1.0, pos=(430, 545))
+    other = detection("AXE", 1.0, pos=(100, 100))
+    typist = run_clocked([[deep, other], [deep, other]],
+                         settings=settings, step=0.5)
+    assert typist.typed.count("skullbasher") == 1
+
+
+def test_keyboard_backlog_stretches_the_window_too():
+    """A word behind a deep queue has not even STARTED typing when the
+    base window expires."""
+    data = Settings().to_dict()
+    data["behaviour"]["max_wpm"] = 100.0
+    settings = Settings.from_dict(data)
+    detector = FakeDetector([], settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    engine.queue_keystrokes = lambda: 40        # 40 keys * 0.12s = 4.8s
+    deep = detection("AXE", 1.0, pos=(430, 545))
+    assert engine._dedup_ttl(deep) > 4.8
+
+
+# -- lock-step throttled play ------------------------------------------------
+def wpm_settings(wpm=150.0):
+    data = Settings().to_dict()
+    data["behaviour"]["max_wpm"] = wpm
+    return Settings.from_dict(data)
+
+
+def test_lockstep_never_emits_while_keys_are_in_flight():
+    """Run29: 'active word vanished' used to mean 'done' -- but during a
+    lock every word EXCEPT the selection is invisible, so the engine
+    blind-queued words into 3s waits, keys typed into the void. One word
+    in flight, ever."""
+    settings = wpm_settings()
+    detector = FakeDetector([], settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    engine.queue_keystrokes = lambda: 8
+    a = detection("KAYA", 1.0, pos=(300, 300))
+    b = detection("MJOLLNIR", 1.0, pos=(700, 300))
+    assert engine.process_detections(0.0, [a, b]) == []
+    assert typist.typed == []
+
+
+def test_lockstep_feeds_next_word_when_several_are_visible():
+    """Several visible words = no lock held; the most urgent aged word
+    becomes the selection with our first key."""
+    a = detection("KAYA", 1.0, pos=(300, 300))
+    b = detection("MJOLLNIR", 1.0, pos=(700, 300))
+    typist = run_clocked([[a], [a, b]], settings=wpm_settings(), step=0.5)
+    assert typist.typed == ["kaya", "mjollnir"]
+
+
+def test_lockstep_moves_on_when_the_active_word_dies():
+    a = detection("KAYA", 1.0, pos=(300, 300))
+    b = detection("MJOLLNIR", 1.0, pos=(700, 300))
+    typist = run_clocked([[a], [], [b]], settings=wpm_settings(), step=0.7)
+    assert typist.typed == ["kaya", "mjollnir"]
+
+
+def test_lockstep_refeed_waits_out_typing_plus_kill_render():
+    """Run30 ghost letters: the refeed clock ran from EMIT, shorter than
+    the typing itself, so every word was instantly re-typed off a stale
+    pipeline frame. The clock is typing duration + a kill-confirm beat."""
+    a = detection("KAYA", 1.0, pos=(300, 300))
+    typist = run_clocked([[a]] * 4, settings=wpm_settings(), step=0.6)
+    # fed at 0, refed at 1.2s (0.67s window), not at 0.6s or 1.8s
+    assert typist.typed == ["kaya", "kaya"]
+
+
+def test_lockstep_skips_insurance_and_embedded():
+    """Keys are time at capped WPM; speculative typing is off, and a
+    bottom-of-the-band fuzzy (0.65) waits for a cleaner read instead of
+    gambling the keyboard (run37: the 0.64 phantom). A decent fuzzy
+    still types exactly once."""
+    weak = detection("HYPNOTIZE", 0.65, raw="HYPOTHERMIA")
+    typist = run_clocked([[weak]] * 2, settings=wpm_settings(), step=0.6)
+    assert typist.typed == []
+    decent = detection("HYPNOTIZE", 0.82, raw="HYPNOTIZED")
+    typist = run_clocked([[decent]] * 2, settings=wpm_settings(), step=0.6)
+    assert typist.typed == ["hypnotize"]
+
+
+# -- word ages ---------------------------------------------------------------
+def test_an_old_high_word_outranks_a_fresh_closer_one():
+    """Words live ~3.5s from first readable label no matter the path; an
+    arcing word looks geometrically safe at its apex right before it
+    plummets. Age is a deadline position cannot see."""
+    old_high = detection("LYCAN", 1.0, pos=(200, 120))
+    fresh_mid = detection("KHANDA", 1.0, pos=(430, 500))
+    settings = Settings()
+    detector = FakeDetector([], settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    engine.process_detections(0.0, [old_high])
+    engine.process_detections(2.8, [old_high, fresh_mid])
+    # LYCAN was typed at 0.0; at 2.8 it has ~0.6s left vs KHANDA's ~1.1s
+    assert engine._urgency(old_high) < engine._urgency(fresh_mid)
+
+
+def test_ages_survive_gaps_but_forget_eventually():
+    """Identity persists across gray phases (a 2s gap is DIADEM's lock-
+    out, not a death); only a gap longer than a whole lifetime means a
+    genuinely new spawn."""
+    settings = Settings()
+    engine = Engine(FakeDetector([], settings), DryRunTypist(), settings)
+    seen = detection("LYCAN", 1.0, pos=(200, 120))
+    engine.process_detections(0.0, [seen])
+    engine.process_detections(2.0, [])              # gray phase
+    engine.process_detections(2.1, [seen])
+    assert engine._time_left(seen) < 2.0            # age was preserved
+    engine.process_detections(6.0, [])              # gone past a lifetime
+    engine.process_detections(6.1, [seen])
+    assert engine._time_left(seen) > 3.0            # a new spawn now
+
+
+def test_lockstep_rescues_a_flickered_urgent_word():
+    """SVEN dove 166->756, flickered out of the deciding scan, lost the
+    pick to a safer visible word and struck. A recently-seen word with
+    little lifetime left competes via its last known detection."""
+    sven = detection("SVEN", 1.0, pos=(430, 545))
+    hood = detection("HOODWINK", 1.0, pos=(700, 200))
+    settings = wpm_settings()
+    detector = FakeDetector([], settings)
+    typist = DryRunTypist(settings.behaviour)
+    engine = Engine(detector, typist, settings)
+    engine.queue_keystrokes = lambda: 5             # keyboard busy: age only
+    engine.process_detections(0.0, [sven])
+    engine.process_detections(2.3, [sven, hood])    # hood arrives young
+    engine.queue_keystrokes = lambda: 0
+    # SVEN (age 2.5, <1.2s left) flickers out of the deciding scan
+    out = engine.process_detections(2.5, [hood])
+    assert [w.name for w in out] == ["SVEN"]        # rescue outranks hood
+
+
+def test_garbage_read_does_not_block_the_queue():
+    """Run34 LYCAN/BREWMASTER: the EDF-best candidate was an unstable
+    fallback read; the scheduler returned empty instead of taking the
+    next candidate and froze for seconds. Rule 2: never idle."""
+    junk = detection("XQZWJUNKPHRASE", 0.0, pos=(430, 545),
+                     source="fallback")
+    real = detection("BREWMASTER", 1.0, pos=(700, 300))
+    typist = run_clocked([[junk, real]], settings=wpm_settings(), step=0.5)
+    assert typist.typed == ["brewmaster"]
+
+
+def test_a_measured_diver_outranks_slower_lower_words():
+    """Run34 LINA: dove at ~3x the assumed approach speed and struck at
+    age 3.0 while the position model called her safe. Measured velocity
+    predicts arrival."""
+    settings = wpm_settings()
+    engine = Engine(FakeDetector([], settings), DryRunTypist(), settings)
+    engine.queue_keystrokes = lambda: 5              # observe only
+    diver0 = detection("LINA", 1.0, pos=(600, 150))
+    diver1 = detection("LINA", 1.0, pos=(600, 400))
+    lower = detection("PUGNA", 1.0, pos=(200, 500))
+    engine.process_detections(0.0, [diver0, lower])
+    engine.process_detections(0.7, [diver1, lower])
+    # LINA: vy ~357 px/s, ~0.6s from the platform; PUGNA sits still
+    assert engine._urgency(diver1) < engine._urgency(lower)
+
+
+def test_age_and_velocity_survive_a_gray_phase():
+    """DIADEM: unseen for 2.02s while locked out, pruned by the old
+    1.0s forget window, re-entered as a newborn and lost the tie-break
+    to fresh TERRORBLADE -- then struck. Identity persists across gaps;
+    a re-sighted old diver outranks a fresh word instantly."""
+    settings = Settings()
+    engine = Engine(FakeDetector([], settings), DryRunTypist(), settings)
+    engine.queue_keystrokes = lambda: 5
+    d0 = detection("DIADEM", 1.0, pos=(640, 500))
+    engine.process_detections(0.0, [d0])
+    d1 = detection("DIADEM", 1.0, pos=(680, 720))     # re-seen after gap
+    fresh = detection("TERRORBLADE", 1.0, pos=(160, 160))
+    engine.process_detections(2.0, [d1, fresh])
+    assert engine._urgency(d1) < engine._urgency(fresh)
+
+
+def test_lockstep_garbage_guard_blocks_scrap_fuzzies():
+    """Run37: 'A E'->AXE 0.80 (two letters!) stole the keyboard from a
+    diving SKULL BASHER, and 'WARLOC BROADSWORD'->PALADIN SWORD 0.64
+    typed an 11-key phantom. Under a cap wrong keys cost time and can
+    LOCK a word: a fuzzy match needs enough letters read AND a decent
+    score before it may have the keyboard."""
+    ghost = detection("AXE", 0.80, raw="A E", pos=(300, 300))
+    real = detection("SKULL BASHER", 1.0, pos=(700, 300))
+    typist = run_clocked([[ghost, real]] * 2, settings=wpm_settings(),
+                         step=0.6)
+    assert typist.typed == ["skullbasher"]
+
+    low = detection("PALADIN SWORD", 0.64, raw="WARLOC BROADSWORD",
+                    pos=(300, 300))
+    typist = run_clocked([[low]] * 2, settings=wpm_settings(), step=0.6)
+    assert typist.typed == []
+
+
+def test_blind_reveal_prefers_the_hidden_elder():
+    """Run37: SKULL BASHER spawned during HYPERSTONE's lock and surfaced
+    with a newborn's ledger age, tied with the genuinely-new RINGMASTER,
+    lost the tie and struck one second later. A word first seen at a
+    lock's release is presumed half-the-lock old; the engine holds ONE
+    scan so every revealed contender gets a velocity, and RINGMASTER's
+    fast climb proves it newborn -- cancelling its charge and sending
+    the elder first, despite being the longer word."""
+    settings = wpm_settings(100.0)
+    engine = Engine(FakeDetector([], settings),
+                    DryRunTypist(settings.behaviour), settings)
+    hyper = detection("HYPERSTONE", 1.0, pos=(500, 400))
+    out = engine.process_detections(0.0, [hyper])
+    assert [w.name for w in out] == ["HYPERSTONE"]
+    # Lock runs 0.0 -> 1.2 (10 keys at 0.12s). The reveal scan shows
+    # both newcomers at once: no emission yet (measurement beat).
+    basher0 = detection("SKULL BASHER", 1.0, pos=(325, 581))
+    ring0 = detection("RING MASTER", 1.0, pos=(842, 555))
+    out = engine.process_detections(1.25, [basher0, ring0])
+    assert out == []
+    # One scan later: basher hovers at its apex, ringmaster climbs fast.
+    basher1 = detection("SKULL BASHER", 1.0, pos=(326, 582))
+    ring1 = detection("RING MASTER", 1.0, pos=(838, 525))
+    out = engine.process_detections(1.35, [basher1, ring1])
+    assert [w.name for w in out] == ["SKULL BASHER"]
+
+
+def test_reveal_measurement_beat_cannot_stall():
+    """If the second sighting never distinguishes the reveals (both
+    hover), the beat expires at REVEAL_MEASURE and the engine commits
+    with what it has -- rule 2 still holds."""
+    settings = wpm_settings(100.0)
+    engine = Engine(FakeDetector([], settings),
+                    DryRunTypist(settings.behaviour), settings)
+    engine.process_detections(0.0, [detection("HYPERSTONE", 1.0,
+                                              pos=(500, 400))])
+    a = detection("KAYA", 1.0, pos=(325, 581))
+    b = detection("MJOLLNIR", 1.0, pos=(842, 555))
+    assert engine.process_detections(1.25, [a, b]) == []
+    # Neither is re-seen (velocities stay unknown), but the beat expires:
+    out = engine.process_detections(1.60, [])
+    assert [w.name for w in out] == ["KAYA"]        # tie rule: shorter
+
+
+def test_unfinishable_words_yield_to_savable_ones():
+    """Run38: PLATEMAIL was typed with 0.45s left on a measured 400px/s
+    dive -- 9 keys need 1.1s, so it died 4 keys in and the stray 'm'
+    locked MEKANSM, whose lock then ate LINA. A word that cannot finish
+    before its deadline sorts behind every word that can (it is lost
+    either way; the queue behind it is not) but still types on an
+    otherwise-free keyboard."""
+    settings = wpm_settings(100.0)
+    engine = Engine(FakeDetector([], settings),
+                    DryRunTypist(settings.behaviour), settings)
+    engine.queue_keystrokes = lambda: 5              # observe only
+    plate0 = detection("PLATEMAIL", 1.0, pos=(600, 300))
+    plate1 = detection("PLATEMAIL", 1.0, pos=(600, 560))
+    lina = detection("LINA", 1.0, pos=(200, 500))
+    engine.process_detections(0.0, [plate0, lina])
+    engine.process_detections(0.7, [plate1, lina])
+    engine.queue_keystrokes = lambda: 0
+    # PLATEMAIL: ~370 px/s toward the platform, ~0.3s out -- doomed
+    # (9 keys at 0.12s); LINA is fresh and finishable. LINA first,
+    # then the free keyboard still tries the corpse.
+    out = engine.process_detections(0.8, [plate1, lina])
+    assert [w.name for w in out] == ["LINA"]
+    out = engine.process_detections(1.5, [plate1, lina])
+    assert [w.name for w in out] == ["PLATEMAIL"]

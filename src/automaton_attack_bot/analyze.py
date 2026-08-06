@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
-from .lexicon import to_key
+from .core.lexicon import to_key
 
 STABLE_MIN_SIGHTINGS = 2
 STRONG_MATCH = 0.90
@@ -56,6 +56,26 @@ class ReadRecord:
 # offline only: the live loop spends nothing on it.
 PLATFORM_BAND = 0.70
 
+# Sightings of the same word gapped by more than this are two separate
+# spawns, not one long-lived word.
+EPISODE_GAP = 1.0
+
+
+@dataclass
+class Episode:
+    """One continuous stretch of a word being on screen."""
+
+    name: str
+    first_seen: float
+    last_seen: float
+    clock: int | None = None
+    sightings: int = 1
+    deepest: float = 0.0        # max bottom fraction reached
+
+    @property
+    def duration(self) -> float:
+        return self.last_seen - self.first_seen
+
 
 class ReadLog:
     """Aggregates detections across a whole recording."""
@@ -63,6 +83,8 @@ class ReadLog:
     def __init__(self) -> None:
         self.records: dict[str, ReadRecord] = {}
         self.strikes: list[tuple[float, int | None, str]] = []
+        self.episodes: list[Episode] = []
+        self._open_episodes: dict[str, Episode] = {}
 
     def add_strike(self, timestamp: float, clock: int | None,
                    label: str) -> None:
@@ -90,6 +112,37 @@ class ReadLog:
                     or record.best_name is None):
                 record.best_score = detection.match.score
                 record.best_name = detection.match.name
+
+    def add_lifetime(self, timestamp: float, name: str, bottom: float,
+                     clock: int | None = None) -> None:
+        """Track how long a matched word stayed on screen.
+
+        A killed word vanishes instantly (the number under a label is
+        its point value, shown while ALIVE), so an episode's duration is
+        genuine time-alive: label materialise -> death. Long episodes
+        are words that needed retyping or went unread.
+        """
+        episode = self._open_episodes.get(name)
+        if episode and timestamp - episode.last_seen <= EPISODE_GAP:
+            episode.last_seen = timestamp
+            episode.sightings += 1
+            episode.deepest = max(episode.deepest, bottom)
+            return
+        episode = Episode(name, timestamp, timestamp, clock=clock,
+                          deepest=bottom)
+        self.episodes.append(episode)
+        self._open_episodes[name] = episode
+
+    def lingerers(self) -> tuple[float, list[Episode]]:
+        """Average screen time, and the episodes well above it."""
+        stable = [e for e in self.episodes if e.sightings >= 2]
+        if not stable:
+            return 0.0, []
+        average = sum(e.duration for e in stable) / len(stable)
+        threshold = max(1.5, 1.8 * average)
+        slow = sorted((e for e in stable if e.duration >= threshold),
+                      key=lambda e: -e.duration)
+        return average, slow
 
     # -- classification ----------------------------------------------------
     def unmatched(self) -> list[ReadRecord]:
@@ -146,6 +199,21 @@ class ReadLog:
                 lines.append(
                     f"  {r.sample_raw!r:36} seen {r.sightings}x at "
                     f"{when(r)}")
+        average, slow = self.lingerers()
+        if average:
+            stable = sum(1 for e in self.episodes if e.sightings >= 2)
+            lines.append(
+                f"\nWord screen time: {stable} words, average "
+                f"{average:.2f}s alive.")
+            if slow:
+                lines.append("On screen well beyond average:")
+                for e in slow:
+                    note = (f", clock {e.clock // 60}:{e.clock % 60:02d}"
+                            if e.clock is not None else "")
+                    lines.append(
+                        f"  {e.name:40} {e.duration:5.2f}s "
+                        f"({e.first_seen:5.1f}-{e.last_seen:5.1f}s"
+                        f"{note}, deepest {e.deepest:.2f})")
         if not lines:
             return ("No suspicious reads and no platform strikes: every "
                     "stable read matched convincingly.")

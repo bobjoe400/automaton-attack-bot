@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from automaton_attack_bot.config import Settings
-from automaton_attack_bot.detect import Detector
-from automaton_attack_bot.lexicon import Lexicon
+from automaton_attack_bot.core.config import Settings
+from automaton_attack_bot.core.detect import Detector
+from automaton_attack_bot.core.lexicon import Lexicon
 
 
 class NoOcr:
@@ -132,8 +132,8 @@ def test_wrapped_phrase_lines_are_stitched_in_reading_order():
     """A long voice line wraps to two on-screen lines; typed separately
     (bottom first, by urgency) it never completes. Stitched, it types top
     line first as one phrase."""
-    from automaton_attack_bot.detect import Detection
-    from automaton_attack_bot.lexicon import Lexicon
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Lexicon
 
     lexicon = Lexicon(
         ["Placeholder"],
@@ -153,8 +153,8 @@ def test_wrapped_phrase_lines_are_stitched_in_reading_order():
 
 
 def test_stacked_independent_words_are_not_stitched():
-    from automaton_attack_bot.detect import Detection
-    from automaton_attack_bot.lexicon import Lexicon, Match
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Lexicon, Match
 
     lexicon = Lexicon(["Earth Spirit", "Phantom Assassin"])
     detector = Detector(lexicon, NoOcr(), Settings())
@@ -166,8 +166,8 @@ def test_stacked_independent_words_are_not_stitched():
 
 
 def test_distant_lines_are_not_stitched():
-    from automaton_attack_bot.detect import Detection
-    from automaton_attack_bot.lexicon import Lexicon
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Lexicon
 
     lexicon = Lexicon(
         ["Placeholder"],
@@ -186,8 +186,8 @@ def test_three_line_wrapped_phrase_is_stitched():
     APPLE IN / YER MOUTH'); the chain stitcher must absorb all of them,
     not just a pair. A DIVINE RAPIER hidden behind this exact cluster
     escaped while the phrase resolved late."""
-    from automaton_attack_bot.detect import Detection
-    from automaton_attack_bot.lexicon import Lexicon
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Lexicon
 
     lexicon = Lexicon(
         ["Placeholder"],
@@ -204,3 +204,33 @@ def test_three_line_wrapped_phrase_is_stitched():
     assert len(stitched) == 1
     assert stitched[0].match is not None
     assert stitched[0].match.keystrokes == "youlllookgoodwithanappleinyermouth"
+
+
+def test_weak_whole_match_yields_to_a_two_word_split():
+    """'WARLOC BROADSWORD' -- two labels crossing -- whole-matched
+    PALADIN SWORD at 0.64, so the splitter (which only ran on unmatched
+    reads) never fired, and the engine typed an 11-key phantom whose
+    embedded 'w' locked the real WARLOCK (run37). A weak whole-read
+    match must lose to a split whose halves both clearly beat it."""
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Lexicon, Match
+
+    lexicon = Lexicon(["Warlock", "Broadsword", "Paladin Sword"])
+    detector = Detector(lexicon, NoOcr(), Settings())
+    merged = Detection(box=(300, 400, 400, 22), raw="WARLOC BROADSWORD",
+                       match=Match("PALADIN SWORD", 0.64, "vocab"))
+    parts = detector._split_horizontal_merges([merged])
+    assert [p.match.name for p in parts] == ["WARLOCK", "BROADSWORD"]
+
+
+def test_strong_whole_match_is_never_split():
+    """'BELT OF STRENGTH' at 1.0 contains spaces but is one label; a
+    solid match must pass through untouched."""
+    from automaton_attack_bot.core.detect import Detection
+    from automaton_attack_bot.core.lexicon import Lexicon, Match
+
+    lexicon = Lexicon(["Belt of Strength", "Belt", "Strength"])
+    detector = Detector(lexicon, NoOcr(), Settings())
+    solid = Detection(box=(300, 400, 400, 22), raw=" BELT OF STRENGTH",
+                      match=Match("BELT OF STRENGTH", 1.0, "vocab"))
+    assert detector._split_horizontal_merges([solid]) == [solid]

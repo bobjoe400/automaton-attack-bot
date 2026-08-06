@@ -3,7 +3,7 @@
 import threading
 import time
 
-from automaton_attack_bot.ocr import OcrPool
+from automaton_attack_bot.core.ocr import OcrPool
 
 
 class SlowFake:

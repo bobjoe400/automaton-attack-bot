@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from automaton_attack_bot.config import Settings
-from automaton_attack_bot.session import (
+from automaton_attack_bot.core.config import Settings
+from automaton_attack_bot.core.session import (
     GameState,
     SessionTracker,
     _fuzzy_contains,
@@ -146,7 +146,7 @@ def fullgame_frames():
 
 @pytest.fixture(scope="module")
 def tracker():
-    from automaton_attack_bot.ocr import OcrUnavailable, get_backend
+    from automaton_attack_bot.core.ocr import OcrUnavailable, get_backend
 
     try:
         backend = get_backend("auto")
@@ -177,11 +177,11 @@ def test_final_score_is_read(fullgame_frames, tracker):
 
 @pytest.mark.clips
 def test_full_game_replay_walks_the_whole_lifecycle():
-    from automaton_attack_bot.capture import VideoSource
-    from automaton_attack_bot.detect import Detector
-    from automaton_attack_bot.engine import Engine
-    from automaton_attack_bot.lexicon import Lexicon
-    from automaton_attack_bot.ocr import get_backend
+    from automaton_attack_bot.core.capture import VideoSource
+    from automaton_attack_bot.core.detect import Detector
+    from automaton_attack_bot.core.engine import Engine
+    from automaton_attack_bot.core.lexicon import Lexicon
+    from automaton_attack_bot.core.ocr import get_backend
 
     settings = Settings()
     # replay semantics: typed words never vanish on tape (see test_clips)
@@ -219,7 +219,7 @@ def test_full_game_replay_walks_the_whole_lifecycle():
     ("PLAY AGAIN", None),
 ])
 def test_parse_score_survives_ocr_noise(row, expected):
-    from automaton_attack_bot.session import parse_score
+    from automaton_attack_bot.core.session import parse_score
 
     assert parse_score(row) == expected
 
@@ -279,7 +279,7 @@ def test_single_wild_misread_cannot_become_the_score():
     ("", None),
 ])
 def test_parse_timer(text, expected):
-    from automaton_attack_bot.session import parse_timer
+    from automaton_attack_bot.core.session import parse_timer
 
     assert parse_timer(text) == expected
 
@@ -298,6 +298,29 @@ def test_parse_timer(text, expected):
     ("", None),
 ])
 def test_parse_multiplier(text, expected):
-    from automaton_attack_bot.session import parse_multiplier
+    from automaton_attack_bot.core.session import parse_multiplier
 
     assert parse_multiplier(text) == expected
+
+
+# -- click gating -------------------------------------------------------
+@pytest.mark.clips
+def test_the_real_play_again_button_passes_verification(fullgame_frames,
+                                                        tracker):
+    assert tracker.verify_button(fullgame_frames(70.4),
+                                 GameState.GAME_OVER)
+
+
+def test_a_buttonless_game_over_fails_verification():
+    """Clicks once landed on bare background for a whole session; the
+    game-over click is text-gated (the start screen's ornate plate defeats
+    OCR, so its guard is the drive loop's futile-click breaker)."""
+    tracker = SessionTracker(backend=None, settings=Settings())
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    assert not tracker.verify_button(frame, GameState.GAME_OVER)
+
+
+def test_start_screen_clicks_are_not_text_gated():
+    tracker = SessionTracker(backend=None, settings=Settings())
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    assert tracker.verify_button(frame, GameState.START_SCREEN)
